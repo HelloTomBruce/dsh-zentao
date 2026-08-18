@@ -5,6 +5,8 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { localConfigPath, pluginRoot } from "./config.ts";
 
 /** CLI 返回的结构化错误（code 来自 CLI 错误码或 ENOENT）。 */
@@ -27,12 +29,33 @@ type ExecFn = (
   cb: (error: Error | null, stdout: string) => void,
 ) => void;
 
+/**
+ * 解析随插件安装的 zentao-cli bin（作为运行时依赖引入，无需全局安装）。
+ * 解析失败（如本地 dev 未装依赖）时返回 null，回退到 PATH 中的全局 zentao。
+ */
+function resolveBundledCliBin(): string | null {
+  try {
+    const pkgJson = createRequire(import.meta.url).resolve("zentao-cli/package.json");
+    const bin = join(dirname(pkgJson), "bin", "zentao.js");
+    return existsSync(bin) ? bin : null;
+  } catch {
+    return null;
+  }
+}
+
 const defaultExec: ExecFn = (cmd, args, cb) => {
   // 插件自带配置副本：统一携带 ZENTAO_CONFIG_FILE 指向插件目录内的 zentao.json。
   const config = localConfigPath(pluginRoot());
   const env = { ...process.env };
   if (existsSync(config)) env.ZENTAO_CONFIG_FILE = config;
-  execFile(cmd, args, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024, env }, (error, stdout) => {
+  // 优先使用插件依赖中的 zentao-cli，并以当前 node（process.execPath）直接执行
+  // bin 脚本——不依赖 PATH 中的全局 zentao / node，消除宿主环境差异；解析不到
+  // 才回退到全局命令。
+  const bundledBin = resolveBundledCliBin();
+  const [runCmd, runArgs]: [string, string[]] = bundledBin
+    ? [process.execPath, [bundledBin, ...args]]
+    : [cmd, args];
+  execFile(runCmd, runArgs, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024, env }, (error, stdout) => {
     cb(error, String(stdout));
   });
 };
@@ -74,7 +97,7 @@ export async function runZentao(args: string[], exec: ExecFn = defaultExec): Pro
       if (error !== null) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code === "ENOENT") {
-          reject(cliErrorOf("ENOENT", "未找到 zentao CLI，请先安装：npm i -g zentao-cli"));
+          reject(cliErrorOf("ENOENT", "未找到 zentao CLI：插件依赖 zentao-cli 缺失且 PATH 中无全局命令，请重新安装插件（或 npm i -g zentao-cli）"));
           return;
         }
         try {

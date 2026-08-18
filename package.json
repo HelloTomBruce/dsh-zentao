@@ -1,6 +1,6 @@
 {
   "name": "dsh-zentao",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH 插件：1 个 zentao 薄代理工具（查询/操作禅道数据）+ 对话内表格卡片 + 侧栏底部面板。凭证由 zentao CLI 内部管理，插件不接触凭证。",
   "type": "module",
   "main": "./lib/index.js",
@@ -35,6 +35,9 @@
   "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "zentao", "禅道", "project-management"],
   "license": "MIT",
   "engines": { "node": ">=22" },
+  "dependencies": {
+    "zentao-cli": "0.2.0"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
