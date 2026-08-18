@@ -2,7 +2,7 @@
 
 DSH 插件：让 dsh 会话查询和操作禅道（ZenTao）数据。
 
-- **1 个 `zentao` 薄代理工具**：story/bug/task/project/execution/product 等 20 个模块的列表/详情/创建/更新/删除/状态流转
+- **1 个 `zentao` 薄代理工具**：story/bug/task/project/execution/product 等 19 个模块的列表/详情/创建/更新/删除/状态流转
 - **对话内表格卡片**：列表/详情在 Web 客户端渲染为原生表格（`tool.call.toolview`）
 - **侧栏底部面板**：我的任务 / 我的 Bug / 进行中项目（`sidebar.footer.action`）
 
@@ -31,7 +31,7 @@ zentao 模块=bug 动作=resolve id=3395 fields={resolution:fixed, assignedTo:ad
 zentao 模块=task 动作=start id=15317
 ```
 
-范围参数：story/bug/release/feedback/ticket → `product`；execution/build → `project`；**task → `executionID`**（注意不是 execution）。
+范围参数：story/bug/testcase → `product`；epic/requirement/testtask/productplan/release/feedback/ticket/system → `productID`（模型侧仍传 `product`，插件自动映射）；execution/build → `project`；**task → `executionID`**（注意不是 execution）。
 
 ## 已知局限
 
@@ -39,6 +39,12 @@ zentao 模块=task 动作=start id=15317
 - `bug resolve` 必须提供 resolution + assignedTo + resolvedBuild + comment（服务端硬性要求）
 - 禅道无"我的任务"全局入口（task 列表必须按 execution），面板"我的任务"默认空，可改用 `zentao task list executionID=<id>` 查询
 - 面板 Bug 视图按产品逐一遍历（产品数多时较慢）
+
+## 技术说明
+
+- **Node 侧零运行时依赖**：不引入任何 npm 运行时依赖，数据访问复用已安装的 `zentao` CLI（子进程调用），凭证由 CLI 内部管理
+- **客户端 React external**：`lib/client.js`（CJS closure-factory）保持 react/react-dom 外部引用，由宿主注入
+- **构建**：tsdown（node 侧 ESM + 客户端 CJS），`npm run verify` = typecheck + test + build
 
 ## 开发
 
