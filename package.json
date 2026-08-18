@@ -28,7 +28,8 @@
     "build": "tsc -p tsconfig.json && tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
     "test": "vitest run",
-    "verify": "npm run typecheck && npm run test && npm run build"
+    "verify": "npm run typecheck && npm run test && npm run build",
+    "postinstall": "node scripts/copy-zentao-config.mjs"
   },
   "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "zentao", "禅道", "project-management"],
   "license": "MIT",

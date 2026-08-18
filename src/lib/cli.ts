@@ -4,6 +4,8 @@
  */
 
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { localConfigPath, pluginRoot } from "./config.ts";
 
 /** CLI 返回的结构化错误（code 来自 CLI 错误码或 ENOENT）。 */
 export interface CliError extends Error {
@@ -26,7 +28,11 @@ type ExecFn = (
 ) => void;
 
 const defaultExec: ExecFn = (cmd, args, cb) => {
-  execFile(cmd, args, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
+  // 插件自带配置副本：统一携带 ZENTAO_CONFIG_FILE 指向插件目录内的 zentao.json。
+  const config = localConfigPath(pluginRoot());
+  const env = { ...process.env };
+  if (existsSync(config)) env.ZENTAO_CONFIG_FILE = config;
+  execFile(cmd, args, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024, env }, (error, stdout) => {
     cb(error, String(stdout));
   });
 };
