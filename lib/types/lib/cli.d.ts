@@ -14,6 +14,13 @@ type ExecFn = (cmd: string, args: string[], cb: (error: Error | null, stdout: st
  * @returns CLI JSON 输出的 data 字段（列表为数组，详情为对象）。
  */
 export declare function runZentao(args: string[], exec?: ExecFn): Promise<unknown>;
+/**
+ * 执行 zentao CLI 但不强制 JSON 解析（用于 login 等成功时输出纯文本、
+ * --format=json 不生效的命令）。进程退出码 0 即成功，返回原始输出；失败时
+ * 优先从输出中提取 error.code/message（错误 JSON 由 CLI 写到 stderr，已在
+ * defaultExec 合并回退）。
+ */
+export declare function runZentaoLoose(args: string[], exec?: ExecFn): Promise<string>;
 /** 将未知错误规范化为 CliError（无 code 时给 E5001）。 */
 export declare function asCliError(error: unknown): CliError;
 export {};

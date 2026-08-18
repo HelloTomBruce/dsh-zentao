@@ -45,7 +45,8 @@ export declare function buildLoginArgs(body: LoginBody): string[] | null;
 type RunFn = (args: string[]) => Promise<unknown>;
 /**
  * POST /__dsh-zentao__/login：面板登录入口。转发 zentao login（凭证经 CLI
- * 写入插件目录的 zentao.json，不经由本层保存）。run 可注入便于测试。
+ * 写入插件目录的 zentao.json，不经由本层保存）。login 成功输出纯文本而非
+ * JSON，故默认用宽松的 runZentaoLoose；run 可注入便于测试。
  */
 export declare function registerLoginApi(ctx: Context, run?: RunFn): () => void;
 export declare function registerOverviewApi(ctx: Context): () => void;

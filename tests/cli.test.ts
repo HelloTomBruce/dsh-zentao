@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { runZentao } from "../src/lib/cli.js";
+import { runZentao, runZentaoLoose } from "../src/lib/cli.js";
 
 // 注入 fake execFile：runZentao 接受可注入的 exec，便于测试
 function fakeExec(stdout: string, code = 0) {
@@ -53,5 +53,26 @@ describe("runZentao", () => {
   it("exit code 非 0 且 stdout 非 JSON 时报 CLI 错误", async () => {
     const exec = fakeExec("some random error text", 1);
     await expect(runZentao(["bug"], exec as never)).rejects.toThrow(/zentao/);
+  });
+});
+
+describe("runZentaoLoose", () => {
+  it("退出码 0 时返回原始输出（login 成功输出纯文本而非 JSON）", async () => {
+    const exec = fakeExec("登录成功: admin@http://zentao.example.com");
+    const out = await runZentaoLoose(["login", "-s", "http://zentao.example.com", "-u", "admin", "-p", "x"], exec as never);
+    expect(out).toContain("登录成功");
+  });
+
+  it("失败时提取 stderr 合并后的 error JSON", async () => {
+    const exec = fakeExec('{"error":{"code":"1003","message":"当前用户名和密码不正确"}}', 1);
+    await expect(runZentaoLoose(["login"], exec as never)).rejects.toMatchObject({
+      code: "1003",
+      message: expect.stringContaining("当前用户名和密码不正确"),
+    });
+  });
+
+  it("失败且输出非 JSON 时报通用 CLI 错误", async () => {
+    const exec = fakeExec("network unreachable", 1);
+    await expect(runZentaoLoose(["login"], exec as never)).rejects.toMatchObject({ code: "E5001" });
   });
 });

@@ -53,8 +53,10 @@ const defaultExec: ExecFn = (cmd, args, cb) => {
   const [runCmd, runArgs]: [string, string[]] = bundledBin
     ? [process.execPath, [bundledBin, ...args]]
     : [cmd, args];
-  execFile(runCmd, runArgs, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024, env }, (error, stdout) => {
-    cb(error, String(stdout));
+  execFile(runCmd, runArgs, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024, env }, (error, stdout, stderr) => {
+    // 部分命令（如 login）把错误 JSON 写到 stderr：stdout 为空时回退 stderr。
+    const out = String(stdout).trim() !== "" ? String(stdout) : String(stderr);
+    cb(error, out);
   });
 };
 
@@ -110,6 +112,41 @@ export async function runZentao(args: string[], exec: ExecFn = defaultExec): Pro
       } catch (parseErr) {
         reject(parseErr);
       }
+    });
+  });
+}
+
+/**
+ * 执行 zentao CLI 但不强制 JSON 解析（用于 login 等成功时输出纯文本、
+ * --format=json 不生效的命令）。进程退出码 0 即成功，返回原始输出；失败时
+ * 优先从输出中提取 error.code/message（错误 JSON 由 CLI 写到 stderr，已在
+ * defaultExec 合并回退）。
+ */
+export async function runZentaoLoose(args: string[], exec: ExecFn = defaultExec): Promise<string> {
+  const fullArgs = [...args, "--format=json"];
+  return new Promise((resolve, reject) => {
+    exec("zentao", fullArgs, (error, stdout) => {
+      if (error === null) {
+        resolve(stdout);
+        return;
+      }
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        reject(cliErrorOf("ENOENT", "未找到 zentao CLI：插件依赖 zentao-cli 缺失且 PATH 中无全局命令，请重新安装插件（或 npm i -g zentao-cli）"));
+        return;
+      }
+      try {
+        const parsed = JSON.parse(stdout) as { error?: { code?: unknown; message?: unknown } };
+        if (parsed?.error !== undefined) {
+          reject(cliErrorOf(
+            String(parsed.error.code ?? "E5001"),
+            `zentao: ${String(parsed.error.message ?? "zentao 请求失败")}`,
+            stdout,
+          ));
+          return;
+        }
+      } catch { /* 输出非 JSON，走通用错误 */ }
+      reject(cliErrorOf("E5001", `zentao CLI 执行失败：${stdout.slice(0, 200)}`, stdout));
     });
   });
 }

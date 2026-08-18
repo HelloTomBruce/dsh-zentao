@@ -7,7 +7,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
 import type {} from "@deepseek-ai/dsh-host-webserver";
-import { runZentao, asCliError } from "./lib/cli.ts";
+import { runZentao, runZentaoLoose, asCliError } from "./lib/cli.ts";
 
 export const OVERVIEW_PATH = "/__dsh-zentao__/overview";
 export const LOGIN_PATH = "/__dsh-zentao__/login";
@@ -121,9 +121,10 @@ type RunFn = (args: string[]) => Promise<unknown>;
 
 /**
  * POST /__dsh-zentao__/login：面板登录入口。转发 zentao login（凭证经 CLI
- * 写入插件目录的 zentao.json，不经由本层保存）。run 可注入便于测试。
+ * 写入插件目录的 zentao.json，不经由本层保存）。login 成功输出纯文本而非
+ * JSON，故默认用宽松的 runZentaoLoose；run 可注入便于测试。
  */
-export function registerLoginApi(ctx: Context, run: RunFn = runZentao): () => void {
+export function registerLoginApi(ctx: Context, run: RunFn = runZentaoLoose): () => void {
   const webServer = ctx.webServer;
   if (webServer === undefined) return () => {};
   return webServer.register({
