@@ -6,7 +6,7 @@ DSH 插件：让 dsh 会话查询和操作禅道（ZenTao）数据。
 - **对话内表格卡片**：列表/详情在 Web 客户端渲染为原生表格（`tool.call.toolview`）
 - **侧栏底部面板**：我的任务 / 我的 Bug / 进行中项目（`sidebar.footer.action`）
 
-数据访问复用 `zentao` CLI（子进程调用），凭证由 CLI 内部管理，**插件不读取、不存储任何凭证**。
+数据访问复用 `zentao` CLI（子进程调用），凭证由 CLI 内部管理。**安装/加载时插件会把用户的 `zentao.json` 复制到插件安装目录**（幂等，不入库），后续 CLI 调用统一携带 `ZENTAO_CONFIG_FILE` 指向副本——插件自包含，不依赖 `~/.config` 全局状态；重新 `zentao login` 后重启 dsh 会自动同步副本。
 
 ## 安装
 
@@ -43,7 +43,7 @@ zentao 模块=task 动作=start id=15317
 
 ## 技术说明
 
-- **Node 侧零运行时依赖**：不引入任何 npm 运行时依赖，数据访问复用已安装的 `zentao` CLI（子进程调用），凭证由 CLI 内部管理
+- **Node 侧零运行时依赖**：不引入任何 npm 运行时依赖，数据访问复用已安装的 `zentao` CLI（子进程调用）；配置副本 `zentao.json` 在安装/加载时复制到插件目录，CLI 调用经 `ZENTAO_CONFIG_FILE` 指向它
 - **客户端 React external**：`lib/client.js`（CJS closure-factory）保持 react/react-dom 外部引用，由宿主注入
 - **构建**：tsdown（node 侧 ESM + 客户端 CJS），`npm run verify` = typecheck + test + build
 
