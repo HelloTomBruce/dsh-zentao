@@ -251,7 +251,7 @@ git commit -m "feat: dsh-zentao 项目骨架（构建配置 + 空壳）"
 ```ts
 // tests/cli.test.ts
 import { describe, it, expect, vi } from "vitest";
-import { runZentao, cliError } from "../src/lib/cli.js";
+import { runZentao } from "../src/lib/cli.js";
 
 // 注入 fake execFile：runZentao 接受可注入的 exec，便于测试
 function fakeExec(stdout: string, code = 0) {
@@ -1204,7 +1204,10 @@ function cellStyle(kind: ColumnDef["type"]): Record<string, string> {
   return {};
 }
 
-function TableView({ payload }: { payload: Extract<ToolResultPayload, { data: unknown[] }> }) {
+interface ListPayload { module: string; action: string; data: unknown[]; count?: number }
+interface ObjectPayload { module: string; action: string; data: object; count?: number }
+
+function TableView({ payload }: { payload: ListPayload }) {
   const cols = useMemo(() => rowsToColumns(payload.data), [payload.data]);
   if (cols.length === 0) {
     return createElement("div", { style: emptyStyle }, "（空列表）");
@@ -1239,7 +1242,7 @@ function renderCell(value: unknown, type: ColumnDef["type"]): unknown {
   return String(value);
 }
 
-function DetailView({ payload }: { payload: Extract<ToolResultPayload, { data: object }> }) {
+function DetailView({ payload }: { payload: ObjectPayload }) {
   const cols = rowsToColumns(payload.data);
   return createElement(
     "div",
@@ -1293,10 +1296,10 @@ export function ZentaoToolView({ block }: ToolCallViewProps) {
     return createElement("div", { style: emptyStyle }, text ?? "zentao 调用结果不可用（超出窗口）");
   }
   if (Array.isArray(payload.data)) {
-    return createElement(TableView, { payload: payload as Extract<ToolResultPayload, { data: unknown[] }> });
+    return createElement(TableView, { payload: payload as ListPayload });
   }
   if (typeof payload.data === "object" && payload.data !== null) {
-    return createElement(DetailView, { payload: payload as Extract<ToolResultPayload, { data: object }> });
+    return createElement(DetailView, { payload: payload as ObjectPayload });
   }
   return createElement("div", { style: emptyStyle }, String(payload.data));
 }
@@ -1381,7 +1384,7 @@ describe("overviewSummary", () => {
  * /__dsh-zentao__/overview。
  */
 import { createElement, useEffect, useState } from "react";
-import type { SidebarFooterActionOwnerProps } from "@deepseek-ai/dsh-client-ui-slots";
+import type { SidebarFooterActionOwnerProps } from "@deepseek-ai/dsh-client-ui-sidebar/client";
 
 export interface OverviewResponse {
   myTasks: { id: string | number; name: string; status: string; [k: string]: unknown }[];
@@ -1537,7 +1540,6 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject("sidebar.footer.action", () => ctx.slots.register({
     name: "sidebar.footer.action",
     id: "zentao",
-    locale: "zentao",
     label: () => "禅道",
     // owner props { wide } 由 sidebar shell 传入
   }, ZentaoFooterAction));
@@ -1574,7 +1576,7 @@ git commit -m "feat: 侧栏底部禅道面板（sidebar.footer.action）"
 
 DSH 插件：让 dsh 会话查询和操作禅道（ZenTao）数据。
 
-- **1 个 `zentao` 薄代理工具**：story/bug/task/project/execution/product 等 20 个模块的列表/详情/创建/更新/删除/状态流转
+- **1 个 `zentao` 薄代理工具**：story/bug/task/project/execution/product 等 19 个模块的列表/详情/创建/更新/删除/状态流转
 - **对话内表格卡片**：列表/详情在 Web 客户端渲染为原生表格（`tool.call.toolview`）
 - **侧栏底部面板**：我的任务 / 我的 Bug / 进行中项目（`sidebar.footer.action`）
 
