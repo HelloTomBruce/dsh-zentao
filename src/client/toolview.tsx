@@ -1,0 +1,115 @@
+/**
+ * zentao 工具卡：从 tool/result 的文本 content 提取 JSON payload，列表渲染
+ * 为表格，详情渲染为键值列表。解析失败降级为纯文本。
+ */
+import { useMemo } from "react";
+import { createElement } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import type { ToolCallViewProps } from "@deepseek-ai/dsh-client-ui-tool/client";
+import { extractData, rowsToColumns, cellValue, statusLabel, type ColumnDef } from "./table.ts";
+
+function cellStyle(kind: ColumnDef["type"]): Record<string, string> {
+  if (kind === "id") return { color: "var(--dsh-text-secondary, #6b7280)", fontVariantNumeric: "tabular-nums" };
+  if (kind === "status") return { fontWeight: "600" };
+  return {};
+}
+
+interface ListPayload { module: string; action: string; data: unknown[]; count?: number }
+interface ObjectPayload { module: string; action: string; data: object; count?: number }
+
+function TableView({ payload }: { payload: ListPayload }) {
+  const cols = useMemo(() => rowsToColumns(payload.data), [payload.data]);
+  if (cols.length === 0) {
+    return createElement("div", { style: emptyStyle }, "（空列表）");
+  }
+  return createElement(
+    "div",
+    { style: { overflowX: "auto", margin: "8px 0" } },
+    createElement(
+      "table",
+      { style: tableStyle },
+      createElement(
+        "thead",
+        null,
+        createElement("tr", null, ...cols.map((c) =>
+          createElement("th", { key: c.key, style: thStyle }, c.label))),
+      ),
+      createElement(
+        "tbody",
+        null,
+        ...(payload.data as unknown[]).map((row, i) =>
+          createElement("tr", { key: i }, ...cols.map((c) =>
+            createElement("td", { key: c.key, style: { ...tdStyle, ...cellStyle(c.type) } }, renderCell(cellValue(row, c.key), c.type))))),
+      ),
+    ),
+  );
+}
+
+function renderCell(value: unknown, type: ColumnDef["type"]): ReactNode {
+  if (value === null || value === undefined) return "—";
+  if (type === "status") return statusLabel(value);
+  if (type === "text" && typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function DetailView({ payload }: { payload: ObjectPayload }) {
+  const cols = rowsToColumns(payload.data);
+  return createElement(
+    "div",
+    { style: { margin: "8px 0", border: "1px solid var(--dsh-border, #e3e6ea)", borderRadius: "8px", overflow: "hidden" } },
+    ...cols.map((c) =>
+      createElement("div", { key: c.key, style: detailRowStyle },
+        createElement("span", { style: detailKeyStyle }, c.label),
+        createElement("span", { style: detailValueStyle }, renderCell(cellValue(payload.data, c.key), c.type)))),
+  );
+}
+
+const tableStyle: CSSProperties = {
+  width: "100%", borderCollapse: "collapse", fontSize: "13px",
+  border: "1px solid var(--dsh-border, #e3e6ea)", borderRadius: "8px",
+};
+const thStyle: CSSProperties = {
+  textAlign: "left", padding: "6px 10px", fontWeight: "600",
+  borderBottom: "1px solid var(--dsh-border, #e3e6ea)",
+  color: "var(--dsh-text-secondary, #6b7280)", fontSize: "12px", whiteSpace: "nowrap",
+};
+const tdStyle: CSSProperties = {
+  padding: "6px 10px", borderBottom: "1px solid var(--dsh-border, #e3e6ea)",
+  maxWidth: "320px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+};
+const emptyStyle: CSSProperties = {
+  margin: "8px 0", padding: "12px", color: "var(--dsh-text-secondary, #6b7280)", fontSize: "13px",
+  border: "1px dashed var(--dsh-border, #e3e6ea)", borderRadius: "8px", textAlign: "center",
+};
+const detailRowStyle: CSSProperties = {
+  display: "flex", gap: "12px", padding: "6px 10px",
+  borderBottom: "1px solid var(--dsh-border, #e3e6ea)",
+};
+const detailKeyStyle: CSSProperties = {
+  minWidth: "120px", color: "var(--dsh-text-secondary, #6b7280)", fontWeight: "600", fontSize: "12px",
+};
+const detailValueStyle: CSSProperties = { flex: "1", wordBreak: "break-all", fontSize: "13px" };
+
+/** 工具卡主组件：提取 payload → 表格/详情/降级。 */
+export function ZentaoToolView({ block }: ToolCallViewProps) {
+  const text = useMemo(() => {
+    // block 为 settled ToolResultNode：content 里第一个 text block 是 render 输出
+    const content = (block as { content?: readonly { type?: string; text?: string }[] }).content;
+    if (!Array.isArray(content)) return undefined;
+    const t = content.find((b) => b.type === "text" && typeof b.text === "string");
+    return t?.text;
+  }, [block]);
+
+  const payload = useMemo(() => (text === undefined ? null : extractData(text)), [text]);
+
+  if (payload === null) {
+    return createElement("div", { style: emptyStyle }, text ?? "zentao 调用结果不可用（超出窗口）");
+  }
+  if (Array.isArray(payload.data)) {
+    return createElement(TableView, { payload: payload as ListPayload });
+  }
+  if (typeof payload.data === "object" && payload.data !== null) {
+    return createElement(DetailView, { payload: payload as ObjectPayload });
+  }
+  return createElement("div", { style: emptyStyle }, String(payload.data));
+}

@@ -1,8 +1,12 @@
 import type { ClientContext } from "@deepseek-ai/dsh-client-runtime/client";
+import type {} from "@deepseek-ai/dsh-client-ui-slots";
+import { ZentaoToolView } from "./toolview.tsx";
 
 export const inject = ["slots"];
 
 export function apply(ctx: ClientContext): void {
-  void ctx;
-  // Task 5 注册 tool.call.toolview 表格卡；Task 6 注册 sidebar.footer.action 面板。
+  ctx.slots.inject("tool.call.toolview", () => ctx.slots.register({
+    name: "tool.call.toolview",
+    key: "zentao",
+  }, ZentaoToolView));
 }
