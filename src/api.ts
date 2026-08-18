@@ -13,7 +13,9 @@ export const OVERVIEW_PATH = "/__dsh-zentao__/overview";
 
 export interface OverviewRow {
   id: string | number;
-  name: string;
+  /** 标题字段：项目行用 name，bug 行用 title（CLI 原样透传，两者都可能出现）。 */
+  name?: string;
+  title?: string;
   status: string;
   [key: string]: unknown;
 }

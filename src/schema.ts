@@ -18,6 +18,8 @@ interface ModuleInfo {
   readonly label: string;
   /** 列表时必须提供的范围参数名（无则 null）。 */
   readonly scopeFlag: string | null;
+  /** scope 可选：提供则过滤，缺省则列表全部（真实 CLI：execution 无 scope 可列表）。 */
+  readonly scopeOptional?: boolean;
   /** 允许的动作集合。 */
   readonly actions: ReadonlySet<ZentaoAction>;
 }
@@ -28,7 +30,7 @@ export const MODULE_INFO: Record<ZentaoModule, ModuleInfo> = {
   program:     { label: "项目集", scopeFlag: null, actions: set("list", "get", "create", "update", "delete") },
   product:     { label: "产品",   scopeFlag: null, actions: set("list", "get", "create", "update", "delete") },
   project:     { label: "项目",   scopeFlag: null, actions: set("list", "get", "create", "update", "delete") },
-  execution:   { label: "执行",   scopeFlag: "--project", actions: set("list", "get", "create", "update", "delete") },
+  execution:   { label: "执行",   scopeFlag: "--project", scopeOptional: true, actions: set("list", "get", "create", "update", "delete") },
   story:       { label: "需求",   scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
   epic:        { label: "业务需求", scopeFlag: "--productID", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
   requirement: { label: "用户需求", scopeFlag: "--productID", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
@@ -83,10 +85,12 @@ export function buildCliArgs(args: ZentaoArgs): string[] {
       if (scope === "--product" || scope === "--productID") value = args.product;
       else if (scope === "--project") value = args.project;
       else if (scope === "--executionID") value = args.executionID;
-      if (value === undefined) {
+      if (value === undefined && info.scopeOptional !== true) {
         throw new Error(`${info.label}(${module}) 列表需要 ${scope.replace(/^--/, "")} 参数`);
       }
-      return [module, `${scope}=${value}`, "--recPerPage=200"];
+      return value === undefined
+        ? [module, "--recPerPage=200"]
+        : [module, `${scope}=${value}`, "--recPerPage=200"];
     }
     return [module, "--recPerPage=200"];
   }
@@ -118,6 +122,22 @@ export function buildCliArgs(args: ZentaoArgs): string[] {
       throw new Error(`bug resolve 必须提供 ${missing.join("、")}（resolution/assignedTo/resolvedBuild/comment 四项）`);
     }
     return [module, "resolve", String(id), ...flagArgs(fields)];
+  }
+  if (action === "start" && module === "task") {
+    if (id === undefined) throw new Error(`${info.label}(${module}) start 需要 id`);
+    const missing = ["realStarted"].filter((k) => fields?.[k] === undefined);
+    if (missing.length > 0) {
+      throw new Error(`task start 必须提供 ${missing.join("、")}（realStarted 实际开始，必填）`);
+    }
+    return [module, "start", String(id), ...flagArgs(fields)];
+  }
+  if (action === "finish" && module === "task") {
+    if (id === undefined) throw new Error(`${info.label}(${module}) finish 需要 id`);
+    const missing = ["currentConsumed", "realStarted", "finishedDate"].filter((k) => fields?.[k] === undefined);
+    if (missing.length > 0) {
+      throw new Error(`task finish 必须提供 ${missing.join("、")}（currentConsumed/realStarted/finishedDate，必填）`);
+    }
+    return [module, "finish", String(id), ...flagArgs(fields)];
   }
   if (id === undefined) throw new Error(`${info.label}(${module}) ${action} 需要 id`);
   return [module, action, String(id), ...flagArgs(fields)];

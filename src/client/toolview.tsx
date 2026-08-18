@@ -49,6 +49,7 @@ function renderCell(value: unknown, type: ColumnDef["type"]): ReactNode {
   if (value === null || value === undefined) return "—";
   if (type === "status") return statusLabel(value);
   if (type === "text" && typeof value === "object") return JSON.stringify(value);
+  if (typeof value === "boolean") return value ? "是" : "否";
   return String(value);
 }
 
@@ -97,7 +98,13 @@ export function ZentaoToolView({ block }: ToolCallViewProps) {
   const payload = useMemo(() => (meta === undefined ? null : parseMeta(meta)), [meta]);
 
   if (payload === null) {
-    return createElement("div", { style: emptyStyle }, "zentao 调用结果不可用（meta 缺失或格式不符）");
+    // running 态（tool/call 事件先于 tool/result 到达）无 meta；结果态 meta 缺失才是格式问题。
+    const isRunning = (block as { kind?: string }).kind === undefined;
+    return createElement(
+      "div",
+      { style: emptyStyle },
+      isRunning ? "zentao 调用执行中…" : "zentao 调用结果不可用（meta 缺失或格式不符）",
+    );
   }
   if (Array.isArray(payload.data)) {
     return createElement(TableView, { payload: payload as ListPayload });

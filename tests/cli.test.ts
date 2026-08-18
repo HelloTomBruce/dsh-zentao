@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { runZentao, cliError } from "../src/lib/cli.js";
+import { runZentao } from "../src/lib/cli.js";
 
 // 注入 fake execFile：runZentao 接受可注入的 exec，便于测试
 function fakeExec(stdout: string, code = 0) {

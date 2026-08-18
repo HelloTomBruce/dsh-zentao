@@ -15,9 +15,13 @@ function useOverview(): OverviewResponse | null {
   useEffect(() => {
     let alive = true;
     fetch(OVERVIEW_URL, { cache: "no-store" })
-      .then((r) => r.json() as Promise<OverviewResponse>)
+      .then((r) => (r.ok ? r.json() as Promise<OverviewResponse> : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d) => { if (alive) setData(d); })
-      .catch(() => { if (alive) setData({ myTasks: [], myBugs: [], activeProjects: [], error: "网络错误" }); });
+      .catch((err: unknown) => {
+        if (!alive) return;
+        const message = err instanceof Error && /^HTTP /.test(err.message) ? err.message : "网络错误";
+        setData({ myTasks: [], myBugs: [], activeProjects: [], error: message });
+      });
     return () => { alive = false; };
   }, []);
   return data;
@@ -82,6 +86,13 @@ function PanelBody() {
 /** 侧栏底部入口：wide 时显示图标+文字行，rail 时只显示图标；点击弹出面板。 */
 export function ZentaoFooterAction({ wide }: SidebarFooterActionOwnerProps) {
   const [open, setOpen] = useState(false);
+  // Esc 关闭 + 遮罩点击关闭（a11y：role=dialog/aria-modal）。
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
   return createElement("div", { style: { position: "relative" } },
     createElement("button", {
       onClick: () => setOpen(!open),
@@ -89,8 +100,18 @@ export function ZentaoFooterAction({ wide }: SidebarFooterActionOwnerProps) {
       title: "禅道",
       "data-dsh-zentao": "trigger",
     }, wide ? "禅道" : "禅"),
-    open && createElement("div", { style: overlayStyle },
-      createElement("div", { style: panelStyle },
+    open && createElement("div", {
+      style: overlayStyle,
+      onClick: () => setOpen(false),
+      "aria-label": "关闭禅道概览",
+    },
+      createElement("div", {
+        style: panelStyle,
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-label": "禅道概览",
+        onClick: (e: MouseEvent) => e.stopPropagation(),
+      },
         createElement("div", { style: panelHeaderStyle },
           createElement("span", { style: { fontWeight: "600" } }, "禅道概览"),
           createElement("button", {

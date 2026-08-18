@@ -60,4 +60,23 @@ describe("buildCliArgs", () => {
     expect(MODULE_INFO.file.actions.has("update")).toBe(false);
     expect(() => buildCliArgs({ module: "file", action: "update", id: 1 } as never)).toThrow(/动作/);
   });
+
+  it("execution list 无 project 也可（scope 可选）", () => {
+    expect(buildCliArgs({ module: "execution", action: "list" })).toEqual(["execution", "--recPerPage=200"]);
+    expect(buildCliArgs({ module: "execution", action: "list", project: 60 })).toEqual(["execution", "--project=60", "--recPerPage=200"]);
+  });
+
+  it("task start 缺 realStarted 时报错（必填）", () => {
+    expect(() => buildCliArgs({ module: "task", action: "start", id: 1 })).toThrow(/realStarted/);
+    expect(buildCliArgs({ module: "task", action: "start", id: 1, fields: { realStarted: "2026-08-18" } })).toEqual(["task", "start", "1", "--realStarted=2026-08-18"]);
+  });
+
+  it("task finish 缺 currentConsumed/realStarted/finishedDate 时报错（必填）", () => {
+    expect(() => buildCliArgs({ module: "task", action: "finish", id: 1 })).toThrow(/currentConsumed/);
+    const ok = buildCliArgs({
+      module: "task", action: "finish", id: 1,
+      fields: { currentConsumed: 2, realStarted: "2026-08-18", finishedDate: "2026-08-18" },
+    });
+    expect(ok).toEqual(["task", "finish", "1", "--currentConsumed=2", "--realStarted=2026-08-18", "--finishedDate=2026-08-18"]);
+  });
 });

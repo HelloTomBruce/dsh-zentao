@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { apply } from "../src/index.js";
 import { buildCliArgs } from "../src/schema.js";
 
@@ -24,7 +24,6 @@ function mockCtx() {
           return () => {};
         },
       },
-      effect: (fn: () => unknown) => fn(),
     },
   };
 }
