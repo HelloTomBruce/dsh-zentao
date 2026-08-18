@@ -1,0 +1,8 @@
+# dsh-zentao bundle layer. Installed below every profile patch, so users may
+# override or remove these rows by id from their own cordis.patch.yml.
+# `name` resolves through Node from the installed package (linked into the
+# profile by `dsh plugin add`); the client half is discovered from the
+# package.json `dsh.client` manifest.
+- insert:
+    - id: zentao
+      name: 'dsh-zentao'
