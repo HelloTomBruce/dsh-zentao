@@ -1,0 +1,38 @@
+/**
+ * /__dsh-zentao__/overview 数据端点：聚合"我的任务 / 我的 Bug / 进行中
+ * 项目"三个视图供客户端面板 fetch。数据经 CLI 子进程获取（凭证由 CLI
+ * 内部管理）。同源路由，不暴露任何凭证。
+ */
+import type { Context } from "@deepseek-ai/cordis";
+export declare const OVERVIEW_PATH = "/__dsh-zentao__/overview";
+export interface OverviewRow {
+    id: string | number;
+    /** 标题字段：项目行用 name，bug 行用 title（CLI 原样透传，两者都可能出现）。 */
+    name?: string;
+    title?: string;
+    status: string;
+    [key: string]: unknown;
+}
+export interface OverviewData {
+    myTasks: OverviewRow[];
+    myBugs: OverviewRow[];
+    activeProjects: OverviewRow[];
+    error?: string;
+}
+interface Queries {
+    tasks: () => Promise<unknown>;
+    bugs: () => Promise<unknown>;
+    projects: () => Promise<unknown>;
+}
+/**
+ * 聚合三次查询。注入 queries 便于测试；默认实现：
+ * - bugs: `bug --product=<p>` 逐个产品拉取（本项目产品 id 2..22）
+ * - projects: `project --recPerPage=200` 后按 status=doing 过滤
+ * - tasks: 无全局入口，返回空（CLI 局限），面板展示"任务视图需指定执行"
+ */
+export declare function overviewData(queries?: Queries): Promise<OverviewData>;
+/** 默认查询实现：projects 全量过滤；bugs 遍历产品（可配置产品列表见下方）。 */
+export declare function createDefaultQueries(productIds: readonly number[]): Queries;
+export declare function registerOverviewApi(ctx: Context): () => void;
+export {};
+//# sourceMappingURL=api.d.ts.map
