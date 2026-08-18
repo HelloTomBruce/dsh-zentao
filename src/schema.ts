@@ -30,20 +30,20 @@ export const MODULE_INFO: Record<ZentaoModule, ModuleInfo> = {
   project:     { label: "项目",   scopeFlag: null, actions: set("list", "get", "create", "update", "delete") },
   execution:   { label: "执行",   scopeFlag: "--project", actions: set("list", "get", "create", "update", "delete") },
   story:       { label: "需求",   scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
-  epic:        { label: "业务需求", scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
-  requirement: { label: "用户需求", scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
+  epic:        { label: "业务需求", scopeFlag: "--productID", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
+  requirement: { label: "用户需求", scopeFlag: "--productID", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
   bug:         { label: "Bug",    scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete", "activate", "close", "resolve") },
   task:        { label: "任务",   scopeFlag: "--executionID", actions: set("list", "get", "create", "update", "delete", "activate", "close", "start", "finish") },
-  testcase:    { label: "测试用例", scopeFlag: null, actions: set("list", "get", "create", "update", "delete") },
-  testtask:    { label: "测试单", scopeFlag: "--product", actions: set("create", "update", "delete") },
-  productplan: { label: "产品计划", scopeFlag: "--product", actions: set("create", "update", "delete") },
+  testcase:    { label: "测试用例", scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete") },
+  testtask:    { label: "测试单", scopeFlag: "--productID", actions: set("create", "update", "delete") },
+  productplan: { label: "产品计划", scopeFlag: "--productID", actions: set("create", "update", "delete") },
   build:       { label: "版本",   scopeFlag: "--project", actions: set("create", "update", "delete") },
-  release:     { label: "发布",   scopeFlag: "--product", actions: set("create", "update", "delete") },
-  feedback:    { label: "反馈",   scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete", "activate", "close") },
-  ticket:      { label: "工单",   scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete", "activate", "close") },
-  system:      { label: "应用",   scopeFlag: "--product", actions: set("list", "create", "update") },
+  release:     { label: "发布",   scopeFlag: "--productID", actions: set("create", "update", "delete") },
+  feedback:    { label: "反馈",   scopeFlag: "--productID", actions: set("list", "get", "create", "update", "delete", "activate", "close") },
+  ticket:      { label: "工单",   scopeFlag: "--productID", actions: set("list", "get", "create", "update", "delete", "activate", "close") },
+  system:      { label: "应用",   scopeFlag: "--productID", actions: set("list", "create", "update") },
   user:        { label: "用户",   scopeFlag: null, actions: set("list", "get", "create", "update", "delete") },
-  file:        { label: "附件",   scopeFlag: null, actions: set("update", "delete") },
+  file:        { label: "附件",   scopeFlag: null, actions: set("create", "delete") },
 };
 
 export const MODULES = Object.keys(MODULE_INFO) as readonly ZentaoModule[];
@@ -80,7 +80,7 @@ export function buildCliArgs(args: ZentaoArgs): string[] {
     const scope = info.scopeFlag;
     if (scope !== null) {
       let value: number | undefined;
-      if (scope === "--product") value = args.product;
+      if (scope === "--product" || scope === "--productID") value = args.product;
       else if (scope === "--project") value = args.project;
       else if (scope === "--executionID") value = args.executionID;
       if (value === undefined) {

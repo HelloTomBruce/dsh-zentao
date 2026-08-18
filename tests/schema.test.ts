@@ -42,4 +42,22 @@ describe("buildCliArgs", () => {
   it("未知 action 报错", () => {
     expect(() => buildCliArgs({ module: "bug", action: "nope" } as never)).toThrow(/动作/);
   });
+
+  it("productID 模块（feedback）list 用 --productID=", () => {
+    const args: ZentaoArgs = { module: "feedback", action: "list", product: 2 };
+    expect(buildCliArgs(args)).toEqual(["feedback", "--productID=2", "--recPerPage=200"]);
+  });
+
+  it("testcase list 需要 product（scopeFlag 非 null）", () => {
+    const args: ZentaoArgs = { module: "testcase", action: "list", product: 2 };
+    expect(buildCliArgs(args)).toEqual(["testcase", "--product=2", "--recPerPage=200"]);
+    expect(() => buildCliArgs({ module: "testcase", action: "list" })).toThrow(/product/);
+  });
+
+  it("file 动作集为 create/delete（不含 update）", () => {
+    expect(MODULE_INFO.file.actions.has("create")).toBe(true);
+    expect(MODULE_INFO.file.actions.has("delete")).toBe(true);
+    expect(MODULE_INFO.file.actions.has("update")).toBe(false);
+    expect(() => buildCliArgs({ module: "file", action: "update", id: 1 } as never)).toThrow(/动作/);
+  });
 });

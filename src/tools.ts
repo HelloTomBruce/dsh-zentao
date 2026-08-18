@@ -7,12 +7,18 @@ import { buildCliArgs, MODULES, type ZentaoArgs } from "./schema.ts";
 const DESCRIPTION = `Query or operate ZenTao (禅道) project data through the installed \`zentao\` CLI.
 
 Usage: pick a \`module\` (story/bug/task/project/execution/product/...) and an \`action\`:
-- list: fetch rows (pass the module's scope param, e.g. bug -> product, task -> executionID)
+- list: fetch rows (pass the module's scope param, e.g. bug -> product, release -> productID, task -> executionID)
 - get <id>: fetch one object
 - create: pass \`fields\` (e.g. title, assignedTo, pri)
 - update <id>: pass changed \`fields\` only (CLI backfills the rest)
 - delete <id>
 - status actions per module: bug -> activate/close/resolve; task -> activate/close/start/finish; story -> activate/close/change
+
+Scope flags by module family:
+- \`--product\`: story / bug / testcase
+- \`--productID\`: epic / requirement / testtask / productplan / release / feedback / ticket / system
+- \`--project\`: execution / build
+- \`--executionID\`: task (note: not \`execution\`)
 
 Notes:
 - bug resolve requires resolution + assignedTo + resolvedBuild + comment (server-enforced).
@@ -38,7 +44,7 @@ export const ZENTAO_PARAMETERS = {
   },
   product: {
     type: "number",
-    description: "产品 ID（列表范围参数，story/bug/release/feedback/ticket 等需要）。",
+    description: "产品 ID（列表范围参数）。story/bug/testcase 用 --product，epic/requirement/release/feedback/ticket 等用 --productID，插件自动映射。",
   },
   project: {
     type: "number",
@@ -61,7 +67,7 @@ export function applyTools(ctx: Context): () => void {
   disposers.push(ctx.systemPrompt.section({
     name: "tool:zentao",
     order: 130,
-    text: "Use the zentao tool to query or operate ZenTao (禅道) data — bug/story/task/project lists, details, creates, updates, and status transitions (resolve/close/activate/start/finish). For lists pass the module's scope param (bug/story/release -> product, task -> executionID, execution/build -> project); results come back as JSON arrays (200-row cap) — filter client-side. bug resolve needs resolution + assignedTo + resolvedBuild + comment. Requires zentao CLI installed and logged in.",
+    text: "Use the zentao tool to query or operate ZenTao (禅道) data — bug/story/task/project lists, details, creates, updates, and status transitions (resolve/close/activate/start/finish). For lists pass the module's scope param (story/bug/testcase -> product; epic/requirement/release/feedback/ticket -> productID; task -> executionID; execution/build -> project); results come back as JSON arrays (200-row cap) — filter client-side. bug resolve needs resolution + assignedTo + resolvedBuild + comment. Requires zentao CLI installed and logged in.",
   }));
 
   disposers.push(ctx.tools.register(
