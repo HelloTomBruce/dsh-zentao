@@ -1,12 +1,12 @@
 /**
- * zentao 工具卡：从 tool/result 的文本 content 提取 JSON payload，列表渲染
- * 为表格，详情渲染为键值列表。解析失败降级为纯文本。
+ * zentao 工具卡：从 tool/result 的 presentationMeta（block.meta）读取 payload，
+ * 列表渲染为表格，详情渲染为键值列表。meta 缺失/解析失败降级为纯文本。
  */
 import { useMemo } from "react";
 import { createElement } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { ToolCallViewProps } from "@deepseek-ai/dsh-client-ui-tool/client";
-import { extractData, rowsToColumns, cellValue, statusLabel, type ColumnDef } from "./table.ts";
+import { parseMeta, rowsToColumns, cellValue, statusLabel, type ColumnDef } from "./table.ts";
 
 function cellStyle(kind: ColumnDef["type"]): Record<string, string> {
   if (kind === "id") return { color: "var(--dsh-text-secondary, #6b7280)", fontVariantNumeric: "tabular-nums" };
@@ -90,20 +90,14 @@ const detailKeyStyle: CSSProperties = {
 };
 const detailValueStyle: CSSProperties = { flex: "1", wordBreak: "break-all", fontSize: "13px" };
 
-/** 工具卡主组件：提取 payload → 表格/详情/降级。 */
+/** 工具卡主组件：从 block.meta 提取 payload → 表格/详情/降级。 */
 export function ZentaoToolView({ block }: ToolCallViewProps) {
-  const text = useMemo(() => {
-    // block 为 settled ToolResultNode：content 里第一个 text block 是 render 输出
-    const content = (block as { content?: readonly { type?: string; text?: string }[] }).content;
-    if (!Array.isArray(content)) return undefined;
-    const t = content.find((b) => b.type === "text" && typeof b.text === "string");
-    return t?.text;
-  }, [block]);
+  const meta = useMemo(() => (block as { meta?: unknown }).meta, [block]);
 
-  const payload = useMemo(() => (text === undefined ? null : extractData(text)), [text]);
+  const payload = useMemo(() => (meta === undefined ? null : parseMeta(meta)), [meta]);
 
   if (payload === null) {
-    return createElement("div", { style: emptyStyle }, text ?? "zentao 调用结果不可用（超出窗口）");
+    return createElement("div", { style: emptyStyle }, "zentao 调用结果不可用（meta 缺失或格式不符）");
   }
   if (Array.isArray(payload.data)) {
     return createElement(TableView, { payload: payload as ListPayload });

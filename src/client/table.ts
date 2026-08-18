@@ -1,7 +1,8 @@
 /**
- * zentao 工具卡的表格渲染：从工具 result 的文本 payload（JSON）重建列，
- * 渲染为自适应表格。live 与 replay 都从持久化的 tool/call + tool/result
- * 事件恢复（工具输出以 JSON 文本落盘），无自定义 session 事件。
+ * zentao 工具卡的表格渲染：从工具 result 的 presentationMeta（block.meta）
+ * 重建列，渲染为自适应表格。meta 是 harness 写入的 presentation payload
+ * （仅供 UI bridge，不进模型上下文），live 与 replay 都由 tool/result 事件
+ * 持久化携带。
  */
 
 export interface ToolResultPayload {
@@ -11,15 +12,21 @@ export interface ToolResultPayload {
   count?: number;
 }
 
-/** 从工具 result 文本提取 JSON payload；失败返回 null（降级为纯文本）。 */
-export function extractData(text: string): ToolResultPayload | null {
-  try {
-    const parsed = JSON.parse(text) as ToolResultPayload;
-    if (typeof parsed !== "object" || parsed === null) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
+/**
+ * 从 block.meta（presentationMeta 返回值）安全解析 payload；
+ * meta 缺失 / 非对象 / data 缺失 → 返回 null（降级为纯文本）。
+ */
+export function parseMeta(meta: unknown): ToolResultPayload | null {
+  if (typeof meta !== "object" || meta === null) return null;
+  const obj = meta as { module?: unknown; action?: unknown; data?: unknown; count?: unknown };
+  if (typeof obj.module !== "string" || typeof obj.action !== "string") return null;
+  if (!("data" in obj)) return null;
+  return {
+    module: obj.module,
+    action: obj.action,
+    data: obj.data,
+    ...(typeof obj.count === "number" ? { count: obj.count } : {}),
+  };
 }
 
 export interface ColumnDef {

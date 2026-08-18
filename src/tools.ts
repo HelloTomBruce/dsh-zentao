@@ -95,6 +95,9 @@ export function applyTools(ctx: Context): () => void {
         presentationMeta: (_args, value) => ({
           module: value.module,
           action: value.action,
+          // 完整数据：meta 是仅供 UI bridge 的 presentation payload（不进模型上下文），
+          // 客户端表格卡从 block.meta 重建列与行。
+          data: value.data,
           count: value.count ?? 0,
         }),
       },
