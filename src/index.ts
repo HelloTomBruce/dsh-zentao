@@ -1,9 +1,10 @@
 import type { Context } from "@deepseek-ai/cordis";
+import type {} from "@deepseek-ai/dsh-host-webserver";
+import { applyTools } from "./tools.ts";
 
 export const name = "zentao";
-export const inject = ["tools", "webServer"];
+export const inject = ["tools", "webServer", "systemPrompt"];
 
 export function apply(ctx: Context): void {
-  void ctx;
-  // Task 3 注册 zentao 工具；Task 4 注册 /__dsh-zentao__/overview 端点。
+  ctx.effect(() => applyTools(ctx), "dsh-zentao: tools");
 }
