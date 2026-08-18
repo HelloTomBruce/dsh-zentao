@@ -10,6 +10,7 @@ import type {} from "@deepseek-ai/dsh-host-webserver";
 import { runZentao, asCliError } from "./lib/cli.ts";
 
 export const OVERVIEW_PATH = "/__dsh-zentao__/overview";
+export const LOGIN_PATH = "/__dsh-zentao__/login";
 
 export interface OverviewRow {
   id: string | number;
@@ -86,6 +87,73 @@ export function createDefaultQueries(productIds: readonly number[]): Queries {
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
+}
+
+export interface LoginBody {
+  server?: string;
+  account?: string;
+  password?: string;
+  token?: string;
+}
+
+/** 由登录表单构造 CLI 参数；token 优先于 password。缺少必要字段返回 null。 */
+export function buildLoginArgs(body: LoginBody): string[] | null {
+  const server = body.server?.trim();
+  const account = body.account?.trim();
+  if (!server || !account) return null;
+  const args = ["login", "-s", server, "-u", account];
+  const token = body.token?.trim();
+  if (token) return [...args, "-t", token];
+  if (body.password) return [...args, "-p", body.password];
+  return null;
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+type RunFn = (args: string[]) => Promise<unknown>;
+
+/**
+ * POST /__dsh-zentao__/login：面板登录入口。转发 zentao login（凭证经 CLI
+ * 写入插件目录的 zentao.json，不经由本层保存）。run 可注入便于测试。
+ */
+export function registerLoginApi(ctx: Context, run: RunFn = runZentao): () => void {
+  const webServer = ctx.webServer;
+  if (webServer === undefined) return () => {};
+  return webServer.register({
+    kind: "exact",
+    path: LOGIN_PATH,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      if ((req.method ?? "GET") !== "POST") {
+        sendJson(res, 405, { error: "method not allowed" });
+        return;
+      }
+      let body: LoginBody;
+      try {
+        body = JSON.parse(await readBody(req)) as LoginBody;
+      } catch {
+        sendJson(res, 400, { error: "请求体不是合法 JSON" });
+        return;
+      }
+      const args = buildLoginArgs(body);
+      if (args === null) {
+        sendJson(res, 400, { error: "缺少 server / account，或 password / token 均未提供" });
+        return;
+      }
+      try {
+        await run(args);
+        sendJson(res, 200, { ok: true });
+      } catch (error) {
+        sendJson(res, 200, { ok: false, error: asCliError(error).message });
+      }
+    },
+  });
 }
 
 export function registerOverviewApi(ctx: Context): () => void {

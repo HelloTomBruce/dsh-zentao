@@ -5,6 +5,7 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 export declare const OVERVIEW_PATH = "/__dsh-zentao__/overview";
+export declare const LOGIN_PATH = "/__dsh-zentao__/login";
 export interface OverviewRow {
     id: string | number;
     /** 标题字段：项目行用 name，bug 行用 title（CLI 原样透传，两者都可能出现）。 */
@@ -33,6 +34,20 @@ interface Queries {
 export declare function overviewData(queries?: Queries): Promise<OverviewData>;
 /** 默认查询实现：projects 全量过滤；bugs 遍历产品（可配置产品列表见下方）。 */
 export declare function createDefaultQueries(productIds: readonly number[]): Queries;
+export interface LoginBody {
+    server?: string;
+    account?: string;
+    password?: string;
+    token?: string;
+}
+/** 由登录表单构造 CLI 参数；token 优先于 password。缺少必要字段返回 null。 */
+export declare function buildLoginArgs(body: LoginBody): string[] | null;
+type RunFn = (args: string[]) => Promise<unknown>;
+/**
+ * POST /__dsh-zentao__/login：面板登录入口。转发 zentao login（凭证经 CLI
+ * 写入插件目录的 zentao.json，不经由本层保存）。run 可注入便于测试。
+ */
+export declare function registerLoginApi(ctx: Context, run?: RunFn): () => void;
 export declare function registerOverviewApi(ctx: Context): () => void;
 export {};
 //# sourceMappingURL=api.d.ts.map

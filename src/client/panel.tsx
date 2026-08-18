@@ -4,14 +4,16 @@
  * /__dsh-zentao__/overview。纯函数/类型见 panel.ts。
  */
 import { createElement, useEffect, useState } from "react";
-import type { CSSProperties } from "react";
+import type { ChangeEvent, CSSProperties } from "react";
 import type { SidebarFooterActionOwnerProps } from "@deepseek-ai/dsh-client-ui-sidebar/client";
 import type { OverviewResponse } from "./overview.ts";
 
 const OVERVIEW_URL = "/__dsh-zentao__/overview";
+const LOGIN_URL = "/__dsh-zentao__/login";
 
-function useOverview(): OverviewResponse | null {
+function useOverview(): { data: OverviewResponse | null; refresh: () => void } {
   const [data, setData] = useState<OverviewResponse | null>(null);
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     let alive = true;
     fetch(OVERVIEW_URL, { cache: "no-store" })
@@ -23,8 +25,8 @@ function useOverview(): OverviewResponse | null {
         setData({ myTasks: [], myBugs: [], activeProjects: [], error: message });
       });
     return () => { alive = false; };
-  }, []);
-  return data;
+  }, [tick]);
+  return { data, refresh: () => setTick((t) => t + 1) };
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -69,19 +71,100 @@ const emptyStyle: CSSProperties = {
   border: "1px dashed var(--dsh-border, #e3e6ea)", borderRadius: "6px", textAlign: "center",
 };
 
+function LoginField({ label, value, set, placeholder, type = "text" }: {
+  label: string; value: string; set: (v: string) => void; placeholder?: string; type?: string;
+}) {
+  return createElement("label", { style: loginFieldStyle },
+    createElement("span", { style: loginLabelStyle }, label),
+    createElement("input", {
+      type, value, placeholder,
+      onChange: (e: ChangeEvent<HTMLInputElement>) => set(e.target.value),
+      style: loginInputStyle,
+    }),
+  );
+}
+
+/** 面板内登录表单：提交到同源 /__dsh-zentao__/login，成功后回调刷新数据。 */
+function LoginForm({ onLoggedIn }: { onLoggedIn: () => void }) {
+  const [server, setServer] = useState("");
+  const [account, setAccount] = useState("");
+  const [password, setPassword] = useState("");
+  const [token, setToken] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = () => {
+    if (pending) return;
+    setPending(true);
+    setError(null);
+    fetch(LOGIN_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ server, account, password: password || undefined, token: token || undefined }),
+    })
+      .then((r) => r.json() as Promise<{ ok?: boolean; error?: string }>)
+      .then((d) => {
+        if (d.ok === true) onLoggedIn();
+        else setError(d.error ?? "登录失败");
+      })
+      .catch(() => setError("网络错误"))
+      .finally(() => setPending(false));
+  };
+  return createElement("div", null,
+    createElement("div", { style: sectionTitleStyle }, "登录禅道"),
+    createElement(LoginField, { label: "服务地址", value: server, set: setServer, placeholder: "http://zentao.example.com" }),
+    createElement(LoginField, { label: "账号", value: account, set: setAccount }),
+    createElement(LoginField, { label: "密码", value: password, set: setPassword, type: "password" }),
+    createElement(LoginField, { label: "Token（选填，优先于密码）", value: token, set: setToken }),
+    error !== null && createElement("div", { style: loginErrorStyle }, error),
+    createElement("button", { onClick: submit, disabled: pending, style: loginSubmitStyle(pending) },
+      pending ? "登录中…" : "登录"),
+  );
+}
+
+const loginFieldStyle: CSSProperties = { display: "block", marginBottom: "8px" };
+const loginLabelStyle: CSSProperties = {
+  display: "block", fontSize: "12px", color: "var(--dsh-text-secondary, #6b7280)", marginBottom: "3px",
+};
+const loginInputStyle: CSSProperties = {
+  width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "13px",
+  border: "1px solid var(--dsh-border, #e3e6ea)", borderRadius: "6px",
+  background: "var(--dsh-surface, #fff)", color: "inherit",
+};
+const loginErrorStyle: CSSProperties = {
+  fontSize: "12px", color: "var(--dsh-danger, #dc2626)", margin: "4px 0 8px",
+  whiteSpace: "pre-wrap", wordBreak: "break-all",
+};
+const loginSubmitStyle = (pending: boolean): CSSProperties => ({
+  width: "100%", padding: "7px 0", fontSize: "13px", fontWeight: "600",
+  border: "none", borderRadius: "6px", cursor: pending ? "default" : "pointer",
+  background: "var(--dsh-accent, #2f6fed)", color: "#fff", opacity: pending ? 0.7 : 1,
+});
+
 function PanelBody() {
-  const data = useOverview();
+  const { data, refresh } = useOverview();
+  const [showLogin, setShowLogin] = useState(false);
   if (data === null) return createElement("div", { style: emptyStyle }, "加载中…");
   if (data.error !== undefined) {
-    return createElement("div", { style: emptyStyle },
-      `禅道数据获取失败：${data.error}。请确认已安装并登录：npm i -g zentao-cli && zentao login`);
+    return createElement("div", null,
+      createElement("div", { style: emptyStyle }, `禅道数据获取失败：${data.error}`),
+      createElement("div", { style: { height: "10px" } }),
+      createElement(LoginForm, { onLoggedIn: refresh }),
+    );
   }
   return createElement("div", null,
     createElement(Section, { title: "我的任务", rows: data.myTasks, nameKey: "name" }),
     createElement(Section, { title: "我的 Bug", rows: data.myBugs, nameKey: "title" }),
     createElement(Section, { title: "进行中的项目", rows: data.activeProjects, nameKey: "name" }),
+    showLogin
+      ? createElement(LoginForm, { onLoggedIn: () => { setShowLogin(false); refresh(); } })
+      : createElement("button", { onClick: () => setShowLogin(true), style: reloginLinkStyle }, "重新登录 / 切换账号"),
   );
 }
+
+const reloginLinkStyle: CSSProperties = {
+  border: "none", background: "transparent", cursor: "pointer", padding: "0",
+  fontSize: "12px", color: "var(--dsh-text-secondary, #6b7280)", textDecoration: "underline",
+};
 
 /** 侧栏底部入口：wide 时显示图标+文字行，rail 时只显示图标；点击弹出面板。 */
 export function ZentaoFooterAction({ wide }: SidebarFooterActionOwnerProps) {
