@@ -37,8 +37,9 @@ zentao 模块=task 动作=start id=15317
 
 - 列表统一 `--recPerPage=200` 拉全量（`--filter` 与分页不兼容的 pitfall），大列表在模型侧按 status/assignedTo 过滤
 - `bug resolve` 必须提供 resolution + assignedTo + resolvedBuild + comment（服务端硬性要求）
-- 禅道无"我的任务"全局入口（task 列表必须按 execution），面板"我的任务"默认空，可改用 `zentao task list executionID=<id>` 查询
+- 禅道无“我的任务”全局入口（task 列表必须按 execution），面板“我的任务”默认空，可改用 `zentao task list executionID=<id>` 查询
 - 面板 Bug 视图按产品逐一遍历（产品数多时较慢）
+- **会话内请用 zentao 工具而非直接运行 `zentao` CLI**：CLI 凭证（`~/.config/zentao/zentao.json`）在 dsh 会话的 Bash 沙箱中不可达，直接跑会报 E1005；插件工具走 node 宿主进程，不受沙箱影响
 
 ## 技术说明
 
