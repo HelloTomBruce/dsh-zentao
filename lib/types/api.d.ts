@@ -32,7 +32,7 @@ interface Queries {
  * - tasks: 无全局入口，返回空（CLI 局限），面板展示"任务视图需指定执行"
  */
 export declare function overviewData(queries?: Queries): Promise<OverviewData>;
-/** 默认查询实现：projects 全量过滤；bugs 遍历产品（可配置产品列表见下方）。 */
+/** 默认查询实现：projects 全量过滤；bugs 按产品并行拉取（并发上限 6）。 */
 export declare function createDefaultQueries(productIds: readonly number[]): Queries;
 export interface LoginBody {
     server?: string;

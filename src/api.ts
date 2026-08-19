@@ -68,16 +68,30 @@ export async function overviewData(queries: Queries = defaultQueries): Promise<O
   };
 }
 
-/** 默认查询实现：projects 全量过滤；bugs 遍历产品（可配置产品列表见下方）。 */
+/** 带并发上限的 map：保持结果顺序（CLI 子进程开销大，避免无上限并发）。 */
+async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index] as T);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+/** 默认查询实现：projects 全量过滤；bugs 按产品并行拉取（并发上限 6）。 */
 export function createDefaultQueries(productIds: readonly number[]): Queries {
   return {
     tasks: async () => [],
     bugs: async () => {
       const rows: unknown[] = [];
-      for (const pid of productIds) {
-        const data = await runZentao(["bug", `--product=${pid}`, "--recPerPage=200"]);
-        if (Array.isArray(data)) rows.push(...data);
-      }
+      const lists = await mapLimit(productIds, 6, async (pid) =>
+        runZentao(["bug", `--product=${pid}`, "--recPerPage=200"]),
+      );
+      for (const data of lists) if (Array.isArray(data)) rows.push(...data);
       return rows;
     },
     projects: async () => runZentao(["project", "--recPerPage=200"]),
@@ -157,10 +171,23 @@ export function registerLoginApi(ctx: Context, run: RunFn = runZentaoLoose): () 
   });
 }
 
+/** overview 结果缓存 TTL：面板重复打开直接命中，避免每次 21 次 CLI 调用。 */
+const OVERVIEW_CACHE_TTL = 60_000;
+
 export function registerOverviewApi(ctx: Context): () => void {
   const webServer = ctx.webServer;
   if (webServer === undefined) return () => {};
-  // 产品 ID 列表：先查一次 product 列表拿到全部产品，再逐产品拉 Bug。
+  // 60s 缓存 + 并发去重：TTL 内重复打开面板秒回；?fresh=1 强制刷新（登录后用）。
+  let cache: { at: number; data: OverviewData } | null = null;
+  let inflight: Promise<OverviewData> | null = null;
+  // 产品 ID 列表：先查一次 product 列表拿到全部产品，再逐产品并行拉 Bug。
+  const compute = async (): Promise<OverviewData> => {
+    const products = await runZentao(["product", "--recPerPage=200"]);
+    const ids = Array.isArray(products)
+      ? products.map((p) => Number((p as { id?: unknown }).id)).filter((n) => Number.isFinite(n))
+      : [];
+    return overviewData(createDefaultQueries(ids));
+  };
   const route = webServer.register({
     kind: "exact",
     path: OVERVIEW_PATH,
@@ -170,12 +197,20 @@ export function registerOverviewApi(ctx: Context): () => void {
         return;
       }
       try {
-        const products = await runZentao(["product", "--recPerPage=200"]);
-        const ids = Array.isArray(products)
-          ? products.map((p) => Number((p as { id?: unknown }).id)).filter((n) => Number.isFinite(n))
-          : [];
-        const data = await overviewData(createDefaultQueries(ids));
-        sendJson(res, 200, data);
+        const fresh = (req.url ?? "").includes("fresh=1");
+        if (!fresh && cache !== null && Date.now() - cache.at < OVERVIEW_CACHE_TTL) {
+          sendJson(res, 200, cache.data);
+          return;
+        }
+        inflight ??= compute()
+          .then((data) => {
+            cache = { at: Date.now(), data };
+            return data;
+          })
+          .finally(() => {
+            inflight = null;
+          });
+        sendJson(res, 200, await inflight);
       } catch (error) {
         sendJson(res, 200, { myTasks: [], myBugs: [], activeProjects: [], error: asCliError(error).message });
       }

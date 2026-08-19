@@ -16,7 +16,9 @@ function useOverview(): { data: OverviewResponse | null; refresh: () => void } {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     let alive = true;
-    fetch(OVERVIEW_URL, { cache: "no-store" })
+    // 首次挂载走服务端 60s 缓存（秒开）；显式 refresh（登录后）强制刷新。
+    const url = tick === 0 ? OVERVIEW_URL : `${OVERVIEW_URL}?fresh=1`;
+    fetch(url, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() as Promise<OverviewResponse> : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d) => { if (alive) setData(d); })
       .catch((err: unknown) => {
@@ -38,21 +40,19 @@ function StatusBadge({ status }: { status: string }) {
   return createElement("span", { style: { color, fontWeight: "600" } }, status);
 }
 
-function Section({ title, rows, nameKey }: {
-  title: string; rows: { id: string | number; status: string; [k: string]: unknown }[]; nameKey: "name" | "title";
+/** Tab 内容区：空态或行表格（最多 20 行）。 */
+function RowList({ rows, nameKey }: {
+  rows: { id: string | number; status: string; [k: string]: unknown }[]; nameKey: "name" | "title";
 }) {
-  return createElement("div", { style: { marginBottom: "14px" } },
-    createElement("div", { style: sectionTitleStyle }, `${title}（${rows.length}）`),
-    rows.length === 0
-      ? createElement("div", { style: emptyStyle }, "暂无数据")
-      : createElement("table", { style: tableStyle },
-          createElement("tbody", null,
-            ...rows.slice(0, 20).map((row, i) =>
-              createElement("tr", { key: i }, ...[
-                createElement("td", { key: "n", style: tdStyle }, String(row[nameKey] ?? row.id)),
-                createElement("td", { key: "s", style: tdStyle }, createElement(StatusBadge, { status: row.status })),
-              ])))),
-  );
+  return rows.length === 0
+    ? createElement("div", { style: emptyStyle }, "暂无数据")
+    : createElement("table", { style: tableStyle },
+        createElement("tbody", null,
+          ...rows.slice(0, 20).map((row, i) =>
+            createElement("tr", { key: i }, ...[
+              createElement("td", { key: "n", style: tdStyle }, String(row[nameKey] ?? row.id)),
+              createElement("td", { key: "s", style: tdStyle }, createElement(StatusBadge, { status: row.status })),
+            ]))));
 }
 
 const sectionTitleStyle: CSSProperties = {
@@ -140,9 +140,12 @@ const loginSubmitStyle = (pending: boolean): CSSProperties => ({
   background: "var(--dsh-accent, #2f6fed)", color: "#fff", opacity: pending ? 0.7 : 1,
 });
 
+type TabKey = "projects" | "tasks" | "bugs";
+
 function PanelBody() {
   const { data, refresh } = useOverview();
   const [showLogin, setShowLogin] = useState(false);
+  const [tab, setTab] = useState<TabKey>("projects");
   if (data === null) return createElement("div", { style: emptyStyle }, "加载中…");
   if (data.error !== undefined) {
     return createElement("div", null,
@@ -151,20 +154,59 @@ function PanelBody() {
       createElement(LoginForm, { onLoggedIn: refresh }),
     );
   }
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: "projects", label: `项目（${data.activeProjects.length}）` },
+    { key: "tasks", label: `我的任务（${data.myTasks.length}）` },
+    { key: "bugs", label: `我的 Bug（${data.myBugs.length}）` },
+  ];
   return createElement("div", null,
-    createElement(Section, { title: "我的任务", rows: data.myTasks, nameKey: "name" }),
-    createElement(Section, { title: "我的 Bug", rows: data.myBugs, nameKey: "title" }),
-    createElement(Section, { title: "进行中的项目", rows: data.activeProjects, nameKey: "name" }),
+    createElement("div", { style: tabBarStyle, role: "tablist", "aria-label": "禅道概览分类" },
+      ...tabs.map((t) =>
+        createElement("button", {
+          key: t.key,
+          role: "tab",
+          "aria-selected": tab === t.key,
+          onClick: () => setTab(t.key),
+          style: tabStyle(tab === t.key),
+        }, t.label))),
+    createElement("div", { role: "tabpanel", style: { minHeight: "120px" } },
+      tab === "projects" && createElement(RowList, { rows: data.activeProjects, nameKey: "name" }),
+      tab === "tasks" && createElement(RowList, { rows: data.myTasks, nameKey: "name" }),
+      tab === "bugs" && createElement(RowList, { rows: data.myBugs, nameKey: "title" })),
+    createElement("div", { style: { height: "10px" } }),
     showLogin
       ? createElement(LoginForm, { onLoggedIn: () => { setShowLogin(false); refresh(); } })
       : createElement("button", { onClick: () => setShowLogin(true), style: reloginLinkStyle }, "重新登录 / 切换账号"),
   );
 }
 
+const tabBarStyle: CSSProperties = {
+  display: "flex", gap: "4px", marginBottom: "12px",
+  borderBottom: "1px solid var(--dsh-border, #e3e6ea)",
+};
+const tabStyle = (active: boolean): CSSProperties => ({
+  border: "none", background: "transparent", cursor: "pointer",
+  padding: "6px 10px", fontSize: "13px",
+  fontWeight: active ? "600" : "400",
+  color: active ? "var(--dsh-accent, #2f6fed)" : "var(--dsh-text-secondary, #6b7280)",
+  borderBottom: active ? "2px solid var(--dsh-accent, #2f6fed)" : "2px solid transparent",
+  marginBottom: "-1px",
+});
+
 const reloginLinkStyle: CSSProperties = {
   border: "none", background: "transparent", cursor: "pointer", padding: "0",
   fontSize: "12px", color: "var(--dsh-text-secondary, #6b7280)", textDecoration: "underline",
 };
+
+/** 侧栏入口图标：清单/看板造型，currentColor 随主题。 */
+function ZentaoIcon({ size = 14 }: { size?: number }) {
+  return createElement("svg", {
+    width: size, height: size, viewBox: "0 0 16 16", fill: "none", "aria-hidden": true,
+  },
+    createElement("rect", { x: 1.75, y: 2.25, width: 12.5, height: 11.5, rx: 2, stroke: "currentColor", strokeWidth: 1.4 }),
+    createElement("path", { d: "M4.75 5.75h6.5M4.75 8.25h6.5M4.75 10.75h4", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round" }),
+  );
+}
 
 /** 侧栏底部入口：wide 时显示图标+文字行，rail 时只显示图标；点击弹出面板。 */
 export function ZentaoFooterAction({ wide }: SidebarFooterActionOwnerProps) {
@@ -182,7 +224,7 @@ export function ZentaoFooterAction({ wide }: SidebarFooterActionOwnerProps) {
       style: footerActionStyle(wide),
       title: "禅道",
       "data-dsh-zentao": "trigger",
-    }, wide ? "禅道" : "禅"),
+    }, createElement(ZentaoIcon, null), wide ? createElement("span", null, "禅道") : null),
     open && createElement("div", {
       style: overlayStyle,
       onClick: () => setOpen(false),
@@ -207,7 +249,7 @@ export function ZentaoFooterAction({ wide }: SidebarFooterActionOwnerProps) {
 }
 
 const footerActionStyle = (wide: boolean): CSSProperties => ({
-  display: "flex", alignItems: "center", justifyContent: "center",
+  display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
   width: wide ? "100%" : "40px", height: "32px",
   border: "none", background: "transparent", cursor: "pointer",
   fontSize: "13px", color: "var(--dsh-text-secondary, #6b7280)",
