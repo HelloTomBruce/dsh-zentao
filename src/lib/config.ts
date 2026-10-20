@@ -10,10 +10,50 @@
  * 不影响，且跨 profile 共享登录态。
  */
 
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+/** 当前登录账号摘要（供面板进行【指派给我】本地过滤与 Web 链接生成）。 */
+export interface CurrentProfileInfo {
+  account: string;
+  server?: string | undefined;
+  token?: string | undefined;
+  realname?: string | undefined;
+}
+
+/** 从 dsh 用户目录下的 zentao.json 中读取当前登录的账号与服务地址。 */
+export function readCurrentProfileInfo(root: string = pluginRoot()): CurrentProfileInfo | null {
+  try {
+    const stable = localConfigPath(root);
+    if (!existsSync(stable)) return null;
+    const raw = JSON.parse(readFileSync(stable, "utf8")) as {
+      currentProfile?: string;
+      profiles?: Array<{
+        account?: string;
+        server?: string;
+        token?: string;
+        user?: { realname?: string };
+      }>;
+    };
+    const profiles = raw.profiles ?? [];
+    const current =
+      profiles.find((p) => p.account && p.server && `${p.account}@${p.server}` === raw.currentProfile) ??
+      profiles[0];
+    if (current?.account) {
+      return {
+        account: current.account,
+        server: current.server,
+        token: current.token,
+        realname: current.user?.realname,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /** 从当前文件向上找 package.json 所在目录（兼容源码/构建两种形态）。 */
 export function pluginRoot(): string {

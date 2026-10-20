@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dshHome, localConfigPath } from "../src/lib/config.js";
+import { dshHome, localConfigPath, readCurrentProfileInfo } from "../src/lib/config.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -73,6 +73,36 @@ describe("localConfigPath", () => {
       const stable = localConfigPath("/tmp/nonexistent-plugin-root");
       expect(stable).toBe(join(home, "zentao.json"));
       expect(existsSync(stable)).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("读取当前登录账号与服务器信息", () => {
+    const home = mkdtempSync(join(tmpdir(), "dsh-home-"));
+    vi.stubEnv("DSH_HOME", home);
+    try {
+      writeFileSync(
+        join(home, "zentao.json"),
+        JSON.stringify({
+          profiles: [
+            {
+              server: "http://z.test",
+              account: "dev1",
+              token: "tok1",
+              user: { realname: "开发一号" },
+            },
+          ],
+          currentProfile: "dev1@http://z.test",
+        }),
+      );
+      const info = readCurrentProfileInfo("/tmp/empty");
+      expect(info).toEqual({
+        account: "dev1",
+        server: "http://z.test",
+        token: "tok1",
+        realname: "开发一号",
+      });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

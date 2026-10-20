@@ -9,10 +9,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
 import type {} from "@deepseek-ai/dsh-host-webserver";
 import { runZentao, runZentaoLoose, asCliError } from "./lib/cli.ts";
+import { readCurrentProfileInfo, type CurrentProfileInfo } from "./lib/config.ts";
 import { bugScopeOf, readWorkspaceConfig, WORKSPACE_CONFIG_FILENAME, type WorkspaceConfig } from "./lib/workspace-config.ts";
 
 export const OVERVIEW_PATH = "/__dsh-zentao__/overview";
 export const LOGIN_PATH = "/__dsh-zentao__/login";
+export const FILE_PATH = "/__dsh-zentao__/file";
 
 export interface OverviewRow {
   id: string | number;
@@ -29,12 +31,16 @@ export interface OverviewData {
   /** 范围内的 Bug（product > project > execution 优先取一）。 */
   bugs: OverviewRow[];
   /** 生效的工作区配置摘要（客户端展示绑定信息；未配置时缺省）。 */
-  config?: WorkspaceConfig;
+  config?: WorkspaceConfig | undefined;
   /** 未配置工作区绑定（客户端显示引导态）。 */
-  unconfigured?: boolean;
+  unconfigured?: boolean | undefined;
+  /** 当前登录账号信息（客户端用于【只看指派给我】本地过滤）。 */
+  currentUser?: { account: string; realname?: string | undefined } | undefined;
+  /** 禅道服务器地址（客户端用于生成 Web 查看直链）。 */
+  serverUrl?: string | undefined;
   /** 提示信息（如"配置缺 execution，任务视图为空"）。 */
-  note?: string;
-  error?: string;
+  note?: string | undefined;
+  error?: string | undefined;
 }
 
 interface Queries {
@@ -51,7 +57,21 @@ export function createQueries(config: WorkspaceConfig, run: (args: string[]) => 
   return {
     tasks: config.execution === undefined
       ? async () => []
-      : () => run(["task", `--executionID=${config.execution}`, "--recPerPage=200"]),
+      : async () => {
+          const args = ["task", `--executionID=${config.execution}`, "--recPerPage=200"];
+          // 集群负载均衡容错：若后端个别节点权限/会话异常回退到了其他 execution，自动重试命中正常节点
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const res = await run(args);
+            if (Array.isArray(res) && res.length > 0) {
+              const first = res[0] as { execution?: string | number };
+              if (first.execution !== undefined && String(first.execution) !== String(config.execution)) {
+                continue;
+              }
+            }
+            return res;
+          }
+          return run(args);
+        },
     bugs: (() => {
       const scope = bugScopeOf(config);
       return scope === null
@@ -62,7 +82,11 @@ export function createQueries(config: WorkspaceConfig, run: (args: string[]) => 
 }
 
 /** 聚合两次查询；单边失败时另一边仍返回，并透出首个错误信息。 */
-export async function overviewData(config: WorkspaceConfig, queries: Queries): Promise<OverviewData> {
+export async function overviewData(
+  config: WorkspaceConfig,
+  queries: Queries,
+  profileInfo: CurrentProfileInfo | null = readCurrentProfileInfo(),
+): Promise<OverviewData> {
   const [tasks, bugs] = await Promise.allSettled([queries.tasks(), queries.bugs()]);
   const firstError = [tasks, bugs]
     .map((r) => (r.status === "rejected" ? (r.reason as Error).message : undefined))
@@ -73,6 +97,10 @@ export async function overviewData(config: WorkspaceConfig, queries: Queries): P
     tasks: rows(tasks),
     bugs: rows(bugs),
     config,
+    ...(profileInfo ? {
+      currentUser: { account: profileInfo.account, realname: profileInfo.realname },
+      serverUrl: profileInfo.server,
+    } : {}),
     ...(config.execution === undefined ? { note: `配置缺 execution，任务视图为空（在 ${WORKSPACE_CONFIG_FILENAME} 中补充）` } : {}),
     ...(firstError !== undefined ? { error: firstError } : {}),
   };
@@ -119,9 +147,18 @@ type RunFn = (args: string[]) => Promise<unknown>;
  * 而非 JSON，故默认用宽松的 runZentaoLoose；run 可注入便于测试。
  */
 export function registerLoginApi(ctx: Context, run: RunFn = runZentaoLoose): () => void {
-  const webServer = ctx.webServer;
+  const webServer = ctx.webServer as unknown as {
+    register: (route: unknown) => () => void;
+    exact?: Map<string, unknown>;
+  } | undefined;
   if (webServer === undefined) return () => {};
-  return webServer.register({
+
+  // 清理任何残留的同路径精确路由，防止插件热重载/重装时抛 duplicate exact route
+  if (webServer.exact && typeof webServer.exact.delete === "function") {
+    webServer.exact.delete(LOGIN_PATH);
+  }
+
+  const dispose = webServer.register({
     kind: "exact",
     path: LOGIN_PATH,
     handler: async (req: IncomingMessage, res: ServerResponse) => {
@@ -149,6 +186,92 @@ export function registerLoginApi(ctx: Context, run: RunFn = runZentaoLoose): () 
       }
     },
   });
+
+  return () => {
+    try {
+      dispose?.();
+    } catch {}
+    if (webServer.exact && typeof webServer.exact.delete === "function") {
+      webServer.exact.delete(LOGIN_PATH);
+    }
+  };
+}
+
+function detectContentType(buf: Buffer): string {
+  if (buf.length >= 8 && buf.subarray(0, 8).toString("hex") === "89504e470d0a1a0a") return "image/png";
+  if (buf.length >= 3 && buf.subarray(0, 3).toString("hex") === "ffd8ff") return "image/jpeg";
+  if (buf.length >= 6 && (buf.subarray(0, 6).toString("ascii") === "GIF87a" || buf.subarray(0, 6).toString("ascii") === "GIF89a")) return "image/gif";
+  if (buf.length >= 4 && buf.subarray(0, 4).toString("hex") === "52494646") return "image/webp";
+  return "application/octet-stream";
+}
+
+/**
+ * GET /__dsh-zentao__/file?id=<文件ID>：
+ * 图片流代理端点。使用当前已登录凭证向禅道拉取文件二进制并直吐浏览器，
+ * 解决浏览器同源保护、CORS 与鉴权导致 Bug 详情中图片无法展示的问题。
+ */
+export function registerFileApi(ctx: Context): () => void {
+  const webServer = ctx.webServer as unknown as {
+    register: (route: unknown) => () => void;
+    exact?: Map<string, unknown>;
+  } | undefined;
+  if (webServer === undefined) return () => {};
+
+  if (webServer.exact && typeof webServer.exact.delete === "function") {
+    webServer.exact.delete(FILE_PATH);
+  }
+
+  const dispose = webServer.register({
+    kind: "exact",
+    path: FILE_PATH,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      const url = req.url ?? "";
+      const match = /[?&]id=(\d+)/.exec(url);
+      if (!match || !match[1]) {
+        sendJson(res, 400, { error: "缺少 id 查询参数" });
+        return;
+      }
+      const fileId = match[1];
+      const profile = readCurrentProfileInfo();
+      if (!profile?.server || !profile.token) {
+        sendJson(res, 401, { error: "禅道未登录" });
+        return;
+      }
+
+      try {
+        const downloadUrl = `${profile.server.replace(/\/+$/, "")}/api.php/v2/files/${fileId}/download`;
+        const upstream = await fetch(downloadUrl, {
+          headers: {
+            Token: profile.token,
+            Cookie: "tab=project; app=project",
+          },
+        });
+        if (!upstream.ok) {
+          sendJson(res, upstream.status, { error: `下载失败: HTTP ${upstream.status}` });
+          return;
+        }
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        const contentType = detectContentType(buf);
+        res.writeHead(200, {
+          "content-type": contentType,
+          "cache-control": "public, max-age=86400",
+          "content-length": String(buf.length),
+        });
+        res.end(buf);
+      } catch (err: unknown) {
+        sendJson(res, 500, { error: err instanceof Error ? err.message : "图片拉取失败" });
+      }
+    },
+  });
+
+  return () => {
+    try {
+      dispose?.();
+    } catch {}
+    if (webServer.exact && typeof webServer.exact.delete === "function") {
+      webServer.exact.delete(FILE_PATH);
+    }
+  };
 }
 
 /** overview 结果缓存 TTL：面板重复打开直接命中，避免重复 CLI 调用。 */
@@ -175,8 +298,17 @@ export function registerOverviewApi(ctx: Context, deps: {
   readConfig?: typeof readWorkspaceConfig;
   run?: RunFn;
 } = {}): () => void {
-  const webServer = ctx.webServer;
+  const webServer = ctx.webServer as unknown as {
+    register: (route: unknown) => () => void;
+    exact?: Map<string, unknown>;
+  } | undefined;
   if (webServer === undefined) return () => {};
+
+  // 清理任何残留的同路径精确路由，防止插件热重载/重装时抛 duplicate exact route
+  if (webServer.exact && typeof webServer.exact.delete === "function") {
+    webServer.exact.delete(OVERVIEW_PATH);
+  }
+
   const readConfig = deps.readConfig ?? readWorkspaceConfig;
   const cache = new Map<string, { at: number; data: OverviewData }>();
   const inflight = new Map<string, Promise<OverviewData>>();
@@ -190,7 +322,7 @@ export function registerOverviewApi(ctx: Context, deps: {
     }
     return overviewData(result.config, createQueries(result.config, deps.run));
   };
-  return webServer.register({
+  const dispose = webServer.register({
     kind: "exact",
     path: OVERVIEW_PATH,
     handler: async (req: IncomingMessage, res: ServerResponse) => {
@@ -231,4 +363,13 @@ export function registerOverviewApi(ctx: Context, deps: {
       }
     },
   });
+
+  return () => {
+    try {
+      dispose?.();
+    } catch {}
+    if (webServer.exact && typeof webServer.exact.delete === "function") {
+      webServer.exact.delete(OVERVIEW_PATH);
+    }
+  };
 }

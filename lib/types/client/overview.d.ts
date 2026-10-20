@@ -25,6 +25,11 @@ export interface OverviewResponse {
     bugs: BugRow[];
     config?: WorkspaceBinding;
     unconfigured?: boolean;
+    currentUser?: {
+        account: string;
+        realname?: string;
+    };
+    serverUrl?: string;
     note?: string;
     error?: string;
 }

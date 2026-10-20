@@ -20,7 +20,9 @@ export function apply(ctx: ClientContext): void {
   // 面板经 window 引用读 workspaces/sessions/uiWorkspace 快照解析当前工作区
   //（服务不在本地类型声明中，结构同 workspace.ts 的 ZentaoClientCtx）。
   // SAFETY: 仅存引用不解构；读取全部经可选链，形状不符时安全降级为 undefined。
-  (ctx as unknown as { __DSH_ZENTAO_CLIENT_CTX__?: unknown }).__DSH_ZENTAO_CLIENT_CTX__ = ctx;
+  if (typeof window !== "undefined") {
+    (window as unknown as { __DSH_ZENTAO_CLIENT_CTX__?: unknown }).__DSH_ZENTAO_CLIENT_CTX__ = ctx;
+  }
   // 1. 对话内工具卡：zentao 工具结果渲染为表格/键值列表。
   ctx.slots.inject("tool.call.toolview", () => ctx.slots.register({
     name: "tool.call.toolview",
@@ -41,7 +43,7 @@ export function apply(ctx: ClientContext): void {
           id: TAB_ID,
           kind: TAB_KIND,
           multiple: false,
-          priority: "plugin",
+          priority: "extension",
           title: () => "禅道概览",
           guide: [
             {

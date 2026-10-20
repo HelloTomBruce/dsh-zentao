@@ -31,6 +31,22 @@ describe("createQueries", () => {
     expect(tasks).toEqual([]);
     expect(run).not.toHaveBeenCalled();
   });
+
+  it("当后端节点异常返回其他 execution 的回退数据时自动重试，命中正确 execution", async () => {
+    let call = 0;
+    const run = vi.fn(async () => {
+      call++;
+      if (call === 1) {
+        // 第一次模拟命中异常节点：返回了回退到 169 的任务
+        return [{ id: 15320, execution: "169", name: "开发" }];
+      }
+      // 第二次重试命中正常节点：返回 execution 65 的任务
+      return [{ id: 16561, execution: "65", name: "全量数据同步" }];
+    });
+    const tasks = await createQueries({ execution: 65 }, run).tasks();
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(tasks).toEqual([{ id: 16561, execution: "65", name: "全量数据同步" }]);
+  });
 });
 
 describe("overviewData", () => {
@@ -99,12 +115,42 @@ describe("registerOverviewApi", () => {
     run?: (args: string[]) => Promise<unknown>;
   } = {}): Route {
     const registered: Route[] = [];
+    const exactMap = new Map<string, unknown>();
     const ctx = {
-      webServer: { register: (r: Route) => { registered.push(r); return () => {}; } },
+      webServer: {
+        exact: exactMap,
+        register: (r: Route) => {
+          if (exactMap.has(r.path)) throw new Error(`duplicate ${r.kind} route "${r.path}"`);
+          exactMap.set(r.path, r);
+          registered.push(r);
+          return () => { exactMap.delete(r.path); };
+        },
+      },
     };
     registerOverviewApi(ctx as never, deps as never);
     return registered[0] as Route;
   }
+
+  it("防重复注册：多次调用 registerOverviewApi 会清理旧路由而不报错", () => {
+    const exactMap = new Map<string, unknown>();
+    const ctx = {
+      webServer: {
+        exact: exactMap,
+        register: (r: Route) => {
+          if (exactMap.has(r.path)) throw new Error(`duplicate ${r.kind} route "${r.path}"`);
+          exactMap.set(r.path, r);
+          return () => { exactMap.delete(r.path); };
+        },
+      },
+    };
+    const dispose1 = registerOverviewApi(ctx as never);
+    expect(exactMap.has("/__dsh-zentao__/overview")).toBe(true);
+    // 第二次注册前会安全清除旧路由，不抛 duplicate 错误
+    const dispose2 = registerOverviewApi(ctx as never);
+    expect(exactMap.has("/__dsh-zentao__/overview")).toBe(true);
+    dispose2();
+    expect(exactMap.has("/__dsh-zentao__/overview")).toBe(false);
+  });
 
   it("注册 /__dsh-zentao__/overview 精确路由", () => {
     const route = setup();
@@ -218,12 +264,41 @@ describe("registerLoginApi", () => {
 
   function setup(run: (args: string[]) => Promise<unknown>) {
     const registered: { kind: string; path: string; handler: (req: never, res: never) => Promise<void> }[] = [];
+    const exactMap = new Map<string, unknown>();
     const ctx = {
-      webServer: { register: (r: never) => { registered.push(r); return () => {}; } },
+      webServer: {
+        exact: exactMap,
+        register: (r: { kind: string; path: string; handler: (req: never, res: never) => Promise<void> }) => {
+          if (exactMap.has(r.path)) throw new Error(`duplicate ${r.kind} route "${r.path}"`);
+          exactMap.set(r.path, r);
+          registered.push(r);
+          return () => { exactMap.delete(r.path); };
+        },
+      },
     };
     registerLoginApi(ctx as never, run);
     return registered[0];
   }
+
+  it("防重复注册：多次调用 registerLoginApi 会清理旧路由而不报错", () => {
+    const exactMap = new Map<string, unknown>();
+    const ctx = {
+      webServer: {
+        exact: exactMap,
+        register: (r: { kind: string; path: string }) => {
+          if (exactMap.has(r.path)) throw new Error(`duplicate ${r.kind} route "${r.path}"`);
+          exactMap.set(r.path, r);
+          return () => { exactMap.delete(r.path); };
+        },
+      },
+    };
+    const dispose1 = registerLoginApi(ctx as never, async () => {});
+    expect(exactMap.has("/__dsh-zentao__/login")).toBe(true);
+    const dispose2 = registerLoginApi(ctx as never, async () => {});
+    expect(exactMap.has("/__dsh-zentao__/login")).toBe(true);
+    dispose2();
+    expect(exactMap.has("/__dsh-zentao__/login")).toBe(false);
+  });
 
   it("注册 /__dsh-zentao__/login 精确路由", () => {
     const route = setup(async () => {});

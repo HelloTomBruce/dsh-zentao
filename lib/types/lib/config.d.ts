@@ -9,6 +9,15 @@
  * 后要重新登录"）；dsh 用户目录与 dsh 自身的 profiles/设置同级，重装插件
  * 不影响，且跨 profile 共享登录态。
  */
+/** 当前登录账号摘要（供面板进行【指派给我】本地过滤与 Web 链接生成）。 */
+export interface CurrentProfileInfo {
+    account: string;
+    server?: string | undefined;
+    token?: string | undefined;
+    realname?: string | undefined;
+}
+/** 从 dsh 用户目录下的 zentao.json 中读取当前登录的账号与服务地址。 */
+export declare function readCurrentProfileInfo(root?: string): CurrentProfileInfo | null;
 /** 从当前文件向上找 package.json 所在目录（兼容源码/构建两种形态）。 */
 export declare function pluginRoot(): string;
 /** dsh 用户目录（与 @deepseek-ai/dsh-home-paths 的 resolveDshHome 对齐）。 */

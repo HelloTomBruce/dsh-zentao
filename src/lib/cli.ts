@@ -4,10 +4,41 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { localConfigPath, pluginRoot } from "./config.ts";
+
+/**
+ * 针对禅道多应用架构（Project / Execution 等不同上下文）：
+ * 迭代/执行若归属于项目（Scrum sprint），需要 project 应用上下文（等同于 Web 端的 #app=project）
+ * 才能完整解析项目迭代与成员权限。通过为 CLI fetch 请求注入默认 Cookie，对齐 Web 端行为。
+ */
+const PRELOAD_SOURCE = `
+if (typeof globalThis.fetch === "function") {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = function(url, init = {}) {
+    const headers = new Headers(init?.headers || {});
+    const existingCookie = headers.get("cookie") || "";
+    const extra = "tab=project; app=project";
+    headers.set("cookie", existingCookie ? \`\${existingCookie}; \${extra}\` : extra);
+    return origFetch(url, { ...init, headers });
+  };
+}
+`;
+
+function ensurePreloadScript(root: string = pluginRoot()): string | null {
+  try {
+    const p = join(root, "lib", "preload.cjs");
+    if (!existsSync(p)) {
+      mkdirSync(dirname(p), { recursive: true });
+      writeFileSync(p, PRELOAD_SOURCE.trim(), "utf8");
+    }
+    return p;
+  } catch {
+    return null;
+  }
+}
 
 /** CLI 返回的结构化错误（code 来自 CLI 错误码或 ENOENT）。 */
 export interface CliError extends Error {
@@ -45,7 +76,14 @@ function resolveBundledCliBin(): string | null {
 
 const defaultExec: ExecFn = (cmd, args, cb) => {
   // 配置固定指向插件目录内的 zentao.json（唯一配置来源；登录也由面板发起、写入该文件）。
-  const env = { ...process.env, ZENTAO_CONFIG_FILE: localConfigPath(pluginRoot()) };
+  // 注入 preload 脚本以在 CLI fetch 中默认带入 tab=project / app=project 上下文（对齐 Web 端 #app=project）。
+  const preload = ensurePreloadScript();
+  const nodeOptions = [process.env.NODE_OPTIONS, preload ? `-r ${preload}` : null].filter(Boolean).join(" ").trim();
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ZENTAO_CONFIG_FILE: localConfigPath(pluginRoot()),
+    ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}),
+  };
   // 优先使用插件依赖中的 zentao-cli，并以当前 node（process.execPath）直接执行
   // bin 脚本——不依赖 PATH 中的全局 zentao / node，消除宿主环境差异；解析不到
   // 才回退到全局命令。
