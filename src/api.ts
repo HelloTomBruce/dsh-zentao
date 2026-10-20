@@ -1,20 +1,22 @@
 /**
- * /__dsh-zentao__/overview 数据端点：聚合"我的任务 / 我的 Bug / 进行中
- * 项目"三个视图供客户端面板 fetch。数据经 CLI 子进程获取（凭证由 CLI
- * 内部管理）。同源路由，不暴露任何凭证。
+ * /__dsh-zentao__/overview 数据端点：按工作区绑定配置（<工作区>/.dsh-zentao.json）
+ * 聚合"该工作区所属执行的任务 + 所属范围的 Bug"两个视图，供客户端面板
+ * fetch。数据经 zentao CLI 子进程获取（凭证由 CLI 内部管理），同源路由，
+ * 不暴露任何凭证。登录端点与配置见文件末尾。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
 import type {} from "@deepseek-ai/dsh-host-webserver";
 import { runZentao, runZentaoLoose, asCliError } from "./lib/cli.ts";
+import { bugScopeOf, readWorkspaceConfig, WORKSPACE_CONFIG_FILENAME, type WorkspaceConfig } from "./lib/workspace-config.ts";
 
 export const OVERVIEW_PATH = "/__dsh-zentao__/overview";
 export const LOGIN_PATH = "/__dsh-zentao__/login";
 
 export interface OverviewRow {
   id: string | number;
-  /** 标题字段：项目行用 name，bug 行用 title（CLI 原样透传，两者都可能出现）。 */
+  /** 标题字段：任务行用 name，bug 行用 title（CLI 原样透传，两者都可能出现）。 */
   name?: string;
   title?: string;
   status: string;
@@ -22,79 +24,57 @@ export interface OverviewRow {
 }
 
 export interface OverviewData {
-  myTasks: OverviewRow[];
-  myBugs: OverviewRow[];
-  activeProjects: OverviewRow[];
+  /** 执行下的任务（配置缺 execution 时为空）。 */
+  tasks: OverviewRow[];
+  /** 范围内的 Bug（product > project > execution 优先取一）。 */
+  bugs: OverviewRow[];
+  /** 生效的工作区配置摘要（客户端展示绑定信息；未配置时缺省）。 */
+  config?: WorkspaceConfig;
+  /** 未配置工作区绑定（客户端显示引导态）。 */
+  unconfigured?: boolean;
+  /** 提示信息（如"配置缺 execution，任务视图为空"）。 */
+  note?: string;
   error?: string;
 }
 
 interface Queries {
   tasks: () => Promise<unknown>;
   bugs: () => Promise<unknown>;
-  projects: () => Promise<unknown>;
 }
 
-const defaultQueries: Queries = {
-  // task 列表需要 executionID —— 无法全局枚举，退化为按产品/执行探查：
-  // 真实实现见 overviewData 内的 fallback 逻辑（见下方注释）。
-  tasks: async () => [],
-  bugs: async () => [],
-  projects: async () => [],
-};
-
 /**
- * 聚合三次查询。注入 queries 便于测试；默认实现：
- * - bugs: `bug --product=<p>` 逐个产品拉取（本项目产品 id 2..22）
- * - projects: `project --recPerPage=200` 后按 status=doing 过滤
- * - tasks: 无全局入口，返回空（CLI 局限），面板展示"任务视图需指定执行"
+ * 按工作区配置构造两次 CLI 查询。注入 queries 便于测试：
+ * - tasks: `task --executionID=<id> --recPerPage=200`（execution 缺省 → 空数组 + note）
+ * - bugs: `bug --product|--project|--execution=<id> --recPerPage=200`
  */
-export async function overviewData(queries: Queries = defaultQueries): Promise<OverviewData> {
-  const [tasks, bugs, projects] = await Promise.allSettled([
-    queries.tasks(),
-    queries.bugs(),
-    queries.projects(),
-  ]);
-  const firstError = [tasks, bugs, projects]
-    .map((r) => (r.status === "rejected" ? (r.reason as Error).message : undefined))
-    .find((m) => m !== undefined);
+export function createQueries(config: WorkspaceConfig, run: (args: string[]) => Promise<unknown> = runZentao): Queries {
   return {
-    myTasks: tasks.status === "fulfilled" && Array.isArray(tasks.value) ? tasks.value : [],
-    myBugs: bugs.status === "fulfilled" && Array.isArray(bugs.value) ? bugs.value : [],
-    activeProjects:
-      projects.status === "fulfilled" && Array.isArray(projects.value)
-        ? projects.value.filter((p) => (p as { status?: string }).status === "doing")
-        : [],
-    ...(firstError !== undefined ? { error: firstError } : {}),
+    tasks: config.execution === undefined
+      ? async () => []
+      : () => run(["task", `--executionID=${config.execution}`, "--recPerPage=200"]),
+    bugs: (() => {
+      const scope = bugScopeOf(config);
+      return scope === null
+        ? async () => []
+        : () => run(["bug", `${scope.flag}=${scope.value}`, "--recPerPage=200"]);
+    })(),
   };
 }
 
-/** 带并发上限的 map：保持结果顺序（CLI 子进程开销大，避免无上限并发）。 */
-async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await fn(items[index] as T);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
-/** 默认查询实现：projects 全量过滤；bugs 按产品并行拉取（并发上限 6）。 */
-export function createDefaultQueries(productIds: readonly number[]): Queries {
+/** 聚合两次查询；单边失败时另一边仍返回，并透出首个错误信息。 */
+export async function overviewData(config: WorkspaceConfig, queries: Queries): Promise<OverviewData> {
+  const [tasks, bugs] = await Promise.allSettled([queries.tasks(), queries.bugs()]);
+  const firstError = [tasks, bugs]
+    .map((r) => (r.status === "rejected" ? (r.reason as Error).message : undefined))
+    .find((m) => m !== undefined);
+  const rows = (r: PromiseSettledResult<unknown>): OverviewRow[] =>
+    r.status === "fulfilled" && Array.isArray(r.value) ? (r.value as OverviewRow[]) : [];
   return {
-    tasks: async () => [],
-    bugs: async () => {
-      const rows: unknown[] = [];
-      const lists = await mapLimit(productIds, 6, async (pid) =>
-        runZentao(["bug", `--product=${pid}`, "--recPerPage=200"]),
-      );
-      for (const data of lists) if (Array.isArray(data)) rows.push(...data);
-      return rows;
-    },
-    projects: async () => runZentao(["project", "--recPerPage=200"]),
+    tasks: rows(tasks),
+    bugs: rows(bugs),
+    config,
+    ...(config.execution === undefined ? { note: `配置缺 execution，任务视图为空（在 ${WORKSPACE_CONFIG_FILENAME} 中补充）` } : {}),
+    ...(firstError !== undefined ? { error: firstError } : {}),
   };
 }
 
@@ -135,8 +115,8 @@ type RunFn = (args: string[]) => Promise<unknown>;
 
 /**
  * POST /__dsh-zentao__/login：面板登录入口。转发 zentao login（凭证经 CLI
- * 写入插件目录的 zentao.json，不经由本层保存）。login 成功输出纯文本而非
- * JSON，故默认用宽松的 runZentaoLoose；run 可注入便于测试。
+ * 写入 dsh 用户目录的 zentao.json，不经由本层保存）。login 成功输出纯文本
+ * 而非 JSON，故默认用宽松的 runZentaoLoose；run 可注入便于测试。
  */
 export function registerLoginApi(ctx: Context, run: RunFn = runZentaoLoose): () => void {
   const webServer = ctx.webServer;
@@ -171,24 +151,46 @@ export function registerLoginApi(ctx: Context, run: RunFn = runZentaoLoose): () 
   });
 }
 
-/** overview 结果缓存 TTL：面板重复打开直接命中，避免每次 21 次 CLI 调用。 */
+/** overview 结果缓存 TTL：面板重复打开直接命中，避免重复 CLI 调用。 */
 const OVERVIEW_CACHE_TTL = 60_000;
 
-export function registerOverviewApi(ctx: Context): () => void {
+/** 从请求 URL 解析 workspace 查询参数（URL 解码；decode 失败返回 undefined）。 */
+function workspaceOf(req: IncomingMessage): string | undefined {
+  const url = req.url ?? "";
+  const match = /[?&]workspace=([^&]*)/.exec(url);
+  if (match === null || match[1] === undefined || match[1] === "") return undefined;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * GET /__dsh-zentao__/overview?workspace=<工作区绝对路径>[&fresh=1]：
+ * 读该工作区的 .dsh-zentao.json，按配置拉取任务与 Bug。缓存按工作区分键
+ * （60s TTL + 并发去重）；fresh=1 强制刷新（登录后/手动刷新用）。
+ */
+export function registerOverviewApi(ctx: Context, deps: {
+  readConfig?: typeof readWorkspaceConfig;
+  run?: RunFn;
+} = {}): () => void {
   const webServer = ctx.webServer;
   if (webServer === undefined) return () => {};
-  // 60s 缓存 + 并发去重：TTL 内重复打开面板秒回；?fresh=1 强制刷新（登录后用）。
-  let cache: { at: number; data: OverviewData } | null = null;
-  let inflight: Promise<OverviewData> | null = null;
-  // 产品 ID 列表：先查一次 product 列表拿到全部产品，再逐产品并行拉 Bug。
-  const compute = async (): Promise<OverviewData> => {
-    const products = await runZentao(["product", "--recPerPage=200"]);
-    const ids = Array.isArray(products)
-      ? products.map((p) => Number((p as { id?: unknown }).id)).filter((n) => Number.isFinite(n))
-      : [];
-    return overviewData(createDefaultQueries(ids));
+  const readConfig = deps.readConfig ?? readWorkspaceConfig;
+  const cache = new Map<string, { at: number; data: OverviewData }>();
+  const inflight = new Map<string, Promise<OverviewData>>();
+  const compute = async (workspace: string): Promise<OverviewData> => {
+    const result = await readConfig(workspace);
+    if (!result.ok) {
+      return { tasks: [], bugs: [], error: `${WORKSPACE_CONFIG_FILENAME}：${result.error}` };
+    }
+    if (result.config === null) {
+      return { tasks: [], bugs: [], unconfigured: true };
+    }
+    return overviewData(result.config, createQueries(result.config, deps.run));
   };
-  const route = webServer.register({
+  return webServer.register({
     kind: "exact",
     path: OVERVIEW_PATH,
     handler: async (req: IncomingMessage, res: ServerResponse) => {
@@ -196,25 +198,37 @@ export function registerOverviewApi(ctx: Context): () => void {
         sendJson(res, 405, { error: "method not allowed" });
         return;
       }
+      const workspace = workspaceOf(req);
+      if (workspace === undefined) {
+        sendJson(res, 400, { tasks: [], bugs: [], error: "缺少 workspace 查询参数（工作区绝对路径）" });
+        return;
+      }
       try {
         const fresh = (req.url ?? "").includes("fresh=1");
-        if (!fresh && cache !== null && Date.now() - cache.at < OVERVIEW_CACHE_TTL) {
-          sendJson(res, 200, cache.data);
-          return;
+        const key = workspace;
+        if (!fresh) {
+          const hit = cache.get(key);
+          if (hit !== undefined && Date.now() - hit.at < OVERVIEW_CACHE_TTL) {
+            sendJson(res, 200, hit.data);
+            return;
+          }
         }
-        inflight ??= compute()
-          .then((data) => {
-            cache = { at: Date.now(), data };
-            return data;
-          })
-          .finally(() => {
-            inflight = null;
-          });
-        sendJson(res, 200, await inflight);
+        let pending = inflight.get(key);
+        if (pending === undefined) {
+          pending = compute(workspace)
+            .then((data) => {
+              cache.set(key, { at: Date.now(), data });
+              return data;
+            })
+            .finally(() => {
+              inflight.delete(key);
+            });
+          inflight.set(key, pending);
+        }
+        sendJson(res, 200, await pending);
       } catch (error) {
-        sendJson(res, 200, { myTasks: [], myBugs: [], activeProjects: [], error: asCliError(error).message });
+        sendJson(res, 200, { tasks: [], bugs: [], error: asCliError(error).message });
       }
     },
   });
-  return route;
 }

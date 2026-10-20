@@ -1,33 +1,42 @@
 /**
- * 侧栏底部"禅道"入口（sidebar.footer.action）+ 弹出面板。面板展示
- * 我的任务 / 我的 Bug / 进行中项目三个区块，数据来自同源
- * /__dsh-zentao__/overview。纯函数/类型见 panel.ts。
+ * 右侧侧边栏"禅道概览"Tab 面板（sidebar.right.pane.tab / .title 插槽，
+ * 入口注册见 index.ts）。按当前工作区的 .dsh-zentao.json 绑定配置展示
+ * 该执行下的任务与该范围内的 Bug，数据来自同源
+ * /__dsh-zentao__/overview?workspace=<工作区路径>。纯函数/类型见
+ * overview.ts 与 workspace.ts。
  */
 import { createElement, useEffect, useState } from "react";
 import type { ChangeEvent, CSSProperties } from "react";
-import type { SidebarFooterActionOwnerProps } from "@deepseek-ai/dsh-client-ui-sidebar/client";
 import type { OverviewResponse } from "./overview.ts";
+import { overviewSummary } from "./overview.ts";
+import { useActiveWorkspace } from "./workspace.ts";
+import { ZentaoTabIcon } from "./icons.tsx";
 
 const OVERVIEW_URL = "/__dsh-zentao__/overview";
 const LOGIN_URL = "/__dsh-zentao__/login";
+const CONFIG_FILENAME = ".dsh-zentao.json";
+const CONFIG_SAMPLE = '{ "product": 2, "execution": 168 }';
 
-function useOverview(): { data: OverviewResponse | null; refresh: () => void } {
+function useOverview(workspacePath: string): { data: OverviewResponse | null; refresh: () => void } {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [tick, setTick] = useState(0);
   useEffect(() => {
+    if (workspacePath === "") return;
     let alive = true;
     // 首次挂载走服务端 60s 缓存（秒开）；显式 refresh（登录后）强制刷新。
-    const url = tick === 0 ? OVERVIEW_URL : `${OVERVIEW_URL}?fresh=1`;
+    const url = tick === 0
+      ? `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}`
+      : `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&fresh=1`;
     fetch(url, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() as Promise<OverviewResponse> : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d) => { if (alive) setData(d); })
       .catch((err: unknown) => {
         if (!alive) return;
         const message = err instanceof Error && /^HTTP /.test(err.message) ? err.message : "网络错误";
-        setData({ myTasks: [], myBugs: [], activeProjects: [], error: message });
+        setData({ tasks: [], bugs: [], error: message });
       });
     return () => { alive = false; };
-  }, [tick]);
+  }, [tick, workspacePath]);
   return { data, refresh: () => setTick((t) => t + 1) };
 }
 
@@ -40,7 +49,7 @@ function StatusBadge({ status }: { status: string }) {
   return createElement("span", { style: { color, fontWeight: "600" } }, status);
 }
 
-/** Tab 内容区：空态或行表格（最多 20 行）。 */
+/** 视图内容：空态或行表格（最多 30 行）。 */
 function RowList({ rows, nameKey }: {
   rows: { id: string | number; status: string; [k: string]: unknown }[]; nameKey: "name" | "title";
 }) {
@@ -48,7 +57,7 @@ function RowList({ rows, nameKey }: {
     ? createElement("div", { style: emptyStyle }, "暂无数据")
     : createElement("table", { style: tableStyle },
         createElement("tbody", null,
-          ...rows.slice(0, 20).map((row, i) =>
+          ...rows.slice(0, 30).map((row, i) =>
             createElement("tr", { key: i }, ...[
               createElement("td", { key: "n", style: tdStyle }, String(row[nameKey] ?? row.id)),
               createElement("td", { key: "s", style: tdStyle }, createElement(StatusBadge, { status: row.status })),
@@ -69,6 +78,16 @@ const tdStyle: CSSProperties = {
 const emptyStyle: CSSProperties = {
   padding: "10px", color: "var(--dsh-text-secondary, #6b7280)", fontSize: "13px",
   border: "1px dashed var(--dsh-border, #e3e6ea)", borderRadius: "6px", textAlign: "center",
+};
+const hintStyle: CSSProperties = {
+  fontSize: "12px", color: "var(--dsh-text-secondary, #6b7280)",
+  whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.6,
+};
+const codeStyle: CSSProperties = {
+  display: "block", margin: "6px 0", padding: "8px 10px",
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: "12px",
+  background: "var(--dsh-surface-muted, #f5f6f8)", border: "1px solid var(--dsh-border, #e3e6ea)",
+  borderRadius: "6px", whiteSpace: "pre-wrap", wordBreak: "break-all",
 };
 
 function LoginField({ label, value, set, placeholder, type = "text" }: {
@@ -140,26 +159,73 @@ const loginSubmitStyle = (pending: boolean): CSSProperties => ({
   background: "var(--dsh-accent, #2f6fed)", color: "#fff", opacity: pending ? 0.7 : 1,
 });
 
-type TabKey = "projects" | "tasks" | "bugs";
+type TabKey = "tasks" | "bugs";
 
-function PanelBody() {
-  const { data, refresh } = useOverview();
+/** Tab 标题栏：图标 + 标题 + 未关闭 Bug 计数徽标（数据走服务端 60s 缓存）。 */
+export function ZentaoPanelTitle() {
+  const workspace = useActiveWorkspace();
+  const { data } = useOverview(workspace.path);
+  const summary = data === null ? null : overviewSummary(data);
+  return createElement("span", { style: titleWrapperStyle },
+    createElement(ZentaoTabIcon, { style: { marginRight: 6 } }),
+    createElement("span", null, "禅道概览"),
+    summary !== null && summary.openBugs > 0 &&
+      createElement("span", { style: countBadgeStyle, title: "未关闭 Bug" }, String(summary.openBugs)),
+  );
+}
+
+const titleWrapperStyle: CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 0,
+};
+const countBadgeStyle: CSSProperties = {
+  marginLeft: 6, padding: "0 6px", borderRadius: 999,
+  fontSize: 11, fontWeight: 600, lineHeight: "16px",
+  background: "var(--dsh-accent, #2f6fed)", color: "#fff",
+};
+
+/** 未配置工作区绑定的引导态：文件路径 + 格式示例。 */
+function UnconfiguredGuide({ workspace }: { workspace: { path: string; title: string } }) {
+  return createElement("div", { style: paneWrapperStyle },
+    createElement("div", { style: sectionTitleStyle }, `工作区 ${workspace.title}`),
+    createElement("div", { style: hintStyle },
+      "当前工作区尚未绑定禅道对象。在工作区根目录创建 ",
+      createElement("code", null, CONFIG_FILENAME),
+      `，声明所属的禅道产品 / 执行 / 项目（execution 供任务视图，product（或 project / execution）供 Bug 视图）：`),
+    createElement("code", { style: codeStyle }, `${workspace.path}/${CONFIG_FILENAME}\n${CONFIG_SAMPLE}`),
+    createElement("div", { style: hintStyle },
+      "创建后点击下方刷新即可按该范围展示任务与 Bug。产品 / 执行的 ID 可在对话中用 zentao 工具查询（如 zentao 模块=product 动作=list）。"),
+    createElement("button", { style: reloginLinkStyle }, "刷新"),
+  );
+}
+
+/** Tab 正文：按工作区绑定展示 任务 / Bug 两视图 + 登录入口。 */
+export function ZentaoPanelBody() {
+  const workspace = useActiveWorkspace();
+  const { data, refresh } = useOverview(workspace.path);
   const [showLogin, setShowLogin] = useState(false);
-  const [tab, setTab] = useState<TabKey>("projects");
-  if (data === null) return createElement("div", { style: emptyStyle }, "加载中…");
+  const [tab, setTab] = useState<TabKey>("tasks");
+  if (workspace.path === "") {
+    return createElement("div", { style: paneWrapperStyle },
+      createElement("div", { style: emptyStyle }, "未识别到当前工作区（打开一个工作区会话后再试）"),
+      createElement("div", { style: { height: "10px" } }),
+      createElement("button", { onClick: workspace.refresh, style: reloginLinkStyle }, "重试"));
+  }
+  if (data === null) return createElement("div", { style: paneWrapperStyle },
+    createElement("div", { style: emptyStyle }, "加载中…"));
+  if (data.unconfigured === true) return createElement(UnconfiguredGuide, { workspace });
   if (data.error !== undefined) {
-    return createElement("div", null,
+    return createElement("div", { style: paneWrapperStyle },
       createElement("div", { style: emptyStyle }, `禅道数据获取失败：${data.error}`),
       createElement("div", { style: { height: "10px" } }),
       createElement(LoginForm, { onLoggedIn: refresh }),
     );
   }
   const tabs: { key: TabKey; label: string }[] = [
-    { key: "projects", label: `项目（${data.activeProjects.length}）` },
-    { key: "tasks", label: `我的任务（${data.myTasks.length}）` },
-    { key: "bugs", label: `我的 Bug（${data.myBugs.length}）` },
+    { key: "tasks", label: `任务（${data.tasks.length}）` },
+    { key: "bugs", label: `Bug（${data.bugs.length}）` },
   ];
-  return createElement("div", null,
+  return createElement("div", { style: paneWrapperStyle },
+    data.note !== undefined && createElement("div", { style: hintStyle, key: "note" }, data.note),
     createElement("div", { style: tabBarStyle, role: "tablist", "aria-label": "禅道概览分类" },
       ...tabs.map((t) =>
         createElement("button", {
@@ -170,15 +236,19 @@ function PanelBody() {
           style: tabStyle(tab === t.key),
         }, t.label))),
     createElement("div", { role: "tabpanel", style: { minHeight: "120px" } },
-      tab === "projects" && createElement(RowList, { rows: data.activeProjects, nameKey: "name" }),
-      tab === "tasks" && createElement(RowList, { rows: data.myTasks, nameKey: "name" }),
-      tab === "bugs" && createElement(RowList, { rows: data.myBugs, nameKey: "title" })),
+      tab === "tasks" && createElement(RowList, { rows: data.tasks, nameKey: "name" }),
+      tab === "bugs" && createElement(RowList, { rows: data.bugs, nameKey: "title" })),
     createElement("div", { style: { height: "10px" } }),
     showLogin
       ? createElement(LoginForm, { onLoggedIn: () => { setShowLogin(false); refresh(); } })
       : createElement("button", { onClick: () => setShowLogin(true), style: reloginLinkStyle }, "重新登录 / 切换账号"),
   );
 }
+
+/** Tab 正文容器：占满右侧栏面板高度，内部滚动。 */
+const paneWrapperStyle: CSSProperties = {
+  height: "100%", boxSizing: "border-box", overflowY: "auto", padding: "14px 16px",
+};
 
 const tabBarStyle: CSSProperties = {
   display: "flex", gap: "4px", marginBottom: "12px",
@@ -196,78 +266,4 @@ const tabStyle = (active: boolean): CSSProperties => ({
 const reloginLinkStyle: CSSProperties = {
   border: "none", background: "transparent", cursor: "pointer", padding: "0",
   fontSize: "12px", color: "var(--dsh-text-secondary, #6b7280)", textDecoration: "underline",
-};
-
-/** 侧栏入口图标：清单/看板造型，currentColor 随主题。 */
-function ZentaoIcon({ size = 14 }: { size?: number }) {
-  return createElement("svg", {
-    width: size, height: size, viewBox: "0 0 16 16", fill: "none", "aria-hidden": true,
-  },
-    createElement("rect", { x: 1.75, y: 2.25, width: 12.5, height: 11.5, rx: 2, stroke: "currentColor", strokeWidth: 1.4 }),
-    createElement("path", { d: "M4.75 5.75h6.5M4.75 8.25h6.5M4.75 10.75h4", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round" }),
-  );
-}
-
-/** 侧栏底部入口：wide 时显示图标+文字行，rail 时只显示图标；点击弹出面板。 */
-export function ZentaoFooterAction({ wide }: SidebarFooterActionOwnerProps) {
-  const [open, setOpen] = useState(false);
-  // Esc 关闭 + 遮罩点击关闭（a11y：role=dialog/aria-modal）。
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
-  return createElement("div", { style: { position: "relative" } },
-    createElement("button", {
-      onClick: () => setOpen(!open),
-      style: footerActionStyle(wide),
-      title: "禅道",
-      "data-dsh-zentao": "trigger",
-    }, createElement(ZentaoIcon, null), wide ? createElement("span", null, "禅道") : null),
-    open && createElement("div", {
-      style: overlayStyle,
-      onClick: () => setOpen(false),
-      "aria-label": "关闭禅道概览",
-    },
-      createElement("div", {
-        style: panelStyle,
-        role: "dialog",
-        "aria-modal": "true",
-        "aria-label": "禅道概览",
-        onClick: (e: MouseEvent) => e.stopPropagation(),
-      },
-        createElement("div", { style: panelHeaderStyle },
-          createElement("span", { style: { fontWeight: "600" } }, "禅道概览"),
-          createElement("button", {
-            onClick: () => setOpen(false),
-            style: closeStyle,
-            "aria-label": "关闭",
-          }, "×")),
-        createElement(PanelBody, null))),
-  );
-}
-
-const footerActionStyle = (wide: boolean): CSSProperties => ({
-  display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
-  width: wide ? "100%" : "40px", height: "32px",
-  border: "none", background: "transparent", cursor: "pointer",
-  fontSize: "13px", color: "var(--dsh-text-secondary, #6b7280)",
-});
-const overlayStyle: CSSProperties = {
-  position: "fixed", inset: "0", zIndex: 999,
-  background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center",
-};
-const panelStyle: CSSProperties = {
-  width: "min(520px, 92vw)", maxHeight: "70vh", overflowY: "auto",
-  background: "var(--dsh-surface, #fff)", border: "1px solid var(--dsh-border, #e3e6ea)",
-  borderRadius: "12px", boxShadow: "0 12px 40px rgba(0,0,0,0.18)", padding: "16px 20px",
-};
-const panelHeaderStyle: CSSProperties = {
-  display: "flex", alignItems: "center", justifyContent: "space-between",
-  marginBottom: "12px",
-};
-const closeStyle: CSSProperties = {
-  border: "none", background: "transparent", fontSize: "18px", cursor: "pointer",
-  color: "var(--dsh-text-secondary, #6b7280)", padding: "0 4px",
 };

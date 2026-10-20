@@ -1,7 +1,8 @@
 /**
- * zentao 工具的模块/动作白名单与 CLI 参数构造。所有列表统一
- * --recPerPage=200 拉全量（--filter 与分页不兼容的 pitfall 规避），
- * 程序侧再按需过滤。
+ * zentao 工具的模块/动作白名单与 CLI 参数构造（适配 zentao-cli ≥ 0.3.1：
+ * bug 列表范围三选一、新增 my 地盘模块与 bug confirm 动作）。
+ * 所有列表统一 --recPerPage=200 拉全量（--filter 与分页不兼容的 pitfall
+ * 规避），程序侧再按需过滤。
  */
 
 export type ZentaoModule =
@@ -9,15 +10,17 @@ export type ZentaoModule =
   | "story" | "epic" | "requirement"
   | "bug" | "task" | "testcase" | "testtask"
   | "productplan" | "build" | "release"
-  | "feedback" | "ticket" | "system" | "user" | "file";
+  | "feedback" | "ticket" | "system" | "user" | "file"
+  | "my";
 
-export type ZentaoAction = "list" | "get" | "create" | "update" | "delete" | "activate" | "close" | "resolve" | "start" | "finish" | "change";
+export type ZentaoAction = "list" | "get" | "create" | "update" | "delete" | "activate" | "close" | "resolve" | "start" | "finish" | "change" | "confirm"
+  | "todos" | "tasks" | "bugs" | "stories" | "epics" | "requirements" | "testtasks" | "projects" | "feedbacks" | "tickets" | "testcases" | "meetings" | "issues" | "risks";
 
 interface ModuleInfo {
   /** 中文名（错误提示用）。 */
   readonly label: string;
-  /** 列表时必须提供的范围参数名（无则 null）。 */
-  readonly scopeFlag: string | null;
+  /** 列表时可用的范围参数名集合（空数组 = 无需范围参数）。 */
+  readonly scopeFlags: readonly string[];
   /** scope 可选：提供则过滤，缺省则列表全部（真实 CLI：execution 无 scope 可列表）。 */
   readonly scopeOptional?: boolean;
   /** 允许的动作集合。 */
@@ -27,25 +30,28 @@ interface ModuleInfo {
 const set = (...xs: ZentaoAction[]): ReadonlySet<ZentaoAction> => new Set(xs);
 
 export const MODULE_INFO: Record<ZentaoModule, ModuleInfo> = {
-  program:     { label: "项目集", scopeFlag: null, actions: set("list", "get", "create", "update", "delete") },
-  product:     { label: "产品",   scopeFlag: null, actions: set("list", "get", "create", "update", "delete") },
-  project:     { label: "项目",   scopeFlag: null, actions: set("list", "get", "create", "update", "delete") },
-  execution:   { label: "执行",   scopeFlag: "--project", scopeOptional: true, actions: set("list", "get", "create", "update", "delete") },
-  story:       { label: "需求",   scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
-  epic:        { label: "业务需求", scopeFlag: "--productID", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
-  requirement: { label: "用户需求", scopeFlag: "--productID", actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
-  bug:         { label: "Bug",    scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete", "activate", "close", "resolve") },
-  task:        { label: "任务",   scopeFlag: "--executionID", actions: set("list", "get", "create", "update", "delete", "activate", "close", "start", "finish") },
-  testcase:    { label: "测试用例", scopeFlag: "--product", actions: set("list", "get", "create", "update", "delete") },
-  testtask:    { label: "测试单", scopeFlag: "--productID", actions: set("create", "update", "delete") },
-  productplan: { label: "产品计划", scopeFlag: "--productID", actions: set("create", "update", "delete") },
-  build:       { label: "版本",   scopeFlag: "--project", actions: set("create", "update", "delete") },
-  release:     { label: "发布",   scopeFlag: "--productID", actions: set("create", "update", "delete") },
-  feedback:    { label: "反馈",   scopeFlag: "--productID", actions: set("list", "get", "create", "update", "delete", "activate", "close") },
-  ticket:      { label: "工单",   scopeFlag: "--productID", actions: set("list", "get", "create", "update", "delete", "activate", "close") },
-  system:      { label: "应用",   scopeFlag: "--productID", actions: set("list", "create", "update") },
-  user:        { label: "用户",   scopeFlag: null, actions: set("list", "get", "create", "update", "delete") },
-  file:        { label: "附件",   scopeFlag: null, actions: set("create", "delete") },
+  program:     { label: "项目集", scopeFlags: [], actions: set("list", "get", "create", "update", "delete") },
+  product:     { label: "产品",   scopeFlags: [], actions: set("list", "get", "create", "update", "delete") },
+  project:     { label: "项目",   scopeFlags: [], actions: set("list", "get", "create", "update", "delete") },
+  execution:   { label: "执行",   scopeFlags: ["--project"], scopeOptional: true, actions: set("list", "get", "create", "update", "delete") },
+  story:       { label: "需求",   scopeFlags: ["--product"], actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
+  epic:        { label: "业务需求", scopeFlags: ["--productID"], actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
+  requirement: { label: "用户需求", scopeFlags: ["--productID"], actions: set("list", "get", "create", "update", "delete", "activate", "close", "change") },
+  // 0.3.1 CLI：Bug 列表支持 --product / --project / --execution 三选一；confirm 为新增动作
+  bug:         { label: "Bug",    scopeFlags: ["--product", "--project", "--execution"], actions: set("list", "get", "create", "update", "delete", "activate", "close", "resolve", "confirm") },
+  task:        { label: "任务",   scopeFlags: ["--executionID"], actions: set("list", "get", "create", "update", "delete", "activate", "close", "start", "finish") },
+  testcase:    { label: "测试用例", scopeFlags: ["--product"], actions: set("list", "get", "create", "update", "delete") },
+  testtask:    { label: "测试单", scopeFlags: ["--productID"], actions: set("create", "update", "delete") },
+  productplan: { label: "产品计划", scopeFlags: ["--productID"], actions: set("create", "update", "delete") },
+  build:       { label: "版本",   scopeFlags: ["--project"], actions: set("create", "update", "delete") },
+  release:     { label: "发布",   scopeFlags: ["--productID"], actions: set("create", "update", "delete") },
+  feedback:    { label: "反馈",   scopeFlags: ["--productID"], actions: set("list", "get", "create", "update", "delete", "activate", "close") },
+  ticket:      { label: "工单",   scopeFlags: ["--productID"], actions: set("list", "get", "create", "update", "delete", "activate", "close") },
+  system:      { label: "应用",   scopeFlags: ["--productID"], actions: set("list", "create", "update") },
+  user:        { label: "用户",   scopeFlags: [], actions: set("list", "get", "create", "update", "delete") },
+  file:        { label: "附件",   scopeFlags: [], actions: set("create", "delete") },
+  // 0.3.1 CLI 地盘模块：动作即资源名（指派给我的任务/Bug 等），列表无需范围参数
+  my:          { label: "地盘（指派给我的）", scopeFlags: [], actions: set("todos", "tasks", "bugs", "stories", "epics", "requirements", "testtasks", "projects", "feedbacks", "tickets", "testcases", "meetings", "issues", "risks") },
 };
 
 export const MODULES = Object.keys(MODULE_INFO) as readonly ZentaoModule[];
@@ -65,6 +71,22 @@ export interface ZentaoArgs {
 const RESOLVE_REQUIRED = ["resolution", "assignedTo", "resolvedBuild", "comment"] as const;
 
 /**
+ * 从入参解析首个已提供的范围参数（--execution 与 --executionID 均读
+ * executionID 入参；返回 flag+value 供拼 CLI 参数）。
+ */
+function scopeValueOf(args: ZentaoArgs, flags: readonly string[]): { flag: string; value: number } | undefined {
+  for (const flag of flags) {
+    const value =
+      flag === "--product" || flag === "--productID" ? args.product
+        : flag === "--project" ? args.project
+          : flag === "--execution" || flag === "--executionID" ? args.executionID
+            : undefined;
+    if (value !== undefined) return { flag, value };
+  }
+  return undefined;
+}
+
+/**
  * 把工具入参构造成 CLI 参数数组（不含 --format=json，由调用层追加）。
  * 校验失败抛 Error（message 面向模型，含中文提示）。
  */
@@ -78,19 +100,21 @@ export function buildCliArgs(args: ZentaoArgs): string[] {
     throw new Error(`${info.label}(${module}) 不支持动作 ${action}，可选：${[...info.actions].join("/")}`);
   }
 
+  // 地盘模块：动作即资源名（zentao my tasks），列表式，无需 id 与范围参数。
+  if (module === "my") {
+    return [module, action, "--recPerPage=200"];
+  }
+
   if (action === "list") {
-    const scope = info.scopeFlag;
-    if (scope !== null) {
-      let value: number | undefined;
-      if (scope === "--product" || scope === "--productID") value = args.product;
-      else if (scope === "--project") value = args.project;
-      else if (scope === "--executionID") value = args.executionID;
-      if (value === undefined && info.scopeOptional !== true) {
-        throw new Error(`${info.label}(${module}) 列表需要 ${scope.replace(/^--/, "")} 参数`);
+    const scopes = info.scopeFlags;
+    if (scopes.length > 0) {
+      const provided = scopeValueOf(args, scopes);
+      if (provided === undefined && info.scopeOptional !== true) {
+        throw new Error(`${info.label}(${module}) 列表需要 ${scopes.map((f) => f.replace(/^--/, "")).join(" / ")} 参数`);
       }
-      return value === undefined
+      return provided === undefined
         ? [module, "--recPerPage=200"]
-        : [module, `${scope}=${value}`, "--recPerPage=200"];
+        : [module, `${provided.flag}=${provided.value}`, "--recPerPage=200"];
     }
     return [module, "--recPerPage=200"];
   }

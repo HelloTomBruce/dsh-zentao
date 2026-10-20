@@ -4,13 +4,13 @@ export declare const ZENTAO_PARAMETERS: {
         readonly type: "string";
         readonly required: true;
         readonly enum: readonly import("./schema.ts").ZentaoModule[];
-        readonly description: "禅道模块：program/product/project/execution/story/epic/requirement/bug/task/testcase/testtask/productplan/build/release/feedback/ticket/system/user/file";
+        readonly description: "禅道模块：program/product/project/execution/story/epic/requirement/bug/task/testcase/testtask/productplan/build/release/feedback/ticket/system/user/file/my（地盘，指派给我的）";
     };
     readonly action: {
         readonly type: "string";
         readonly required: true;
-        readonly enum: readonly ["list", "get", "create", "update", "delete", "activate", "close", "resolve", "start", "finish", "change"];
-        readonly description: "动作：list 列表 / get 详情 / create 创建 / update 更新 / delete 删除 / 状态流转（activate/close/resolve/start/finish/change，按模块校验）";
+        readonly enum: readonly ["list", "get", "create", "update", "delete", "activate", "close", "resolve", "confirm", "start", "finish", "change", "todos", "tasks", "bugs", "stories", "epics", "requirements", "testtasks", "projects", "feedbacks", "tickets", "testcases", "meetings", "issues", "risks"];
+        readonly description: "动作：list 列表 / get 详情 / create 创建 / update 更新 / delete 删除 / 状态流转（activate/close/resolve/confirm/start/finish/change，按模块校验）；模块为 my 时动作即资源名（tasks/bugs/stories… 指派给我的）";
     };
     readonly id: {
         readonly type: "number";

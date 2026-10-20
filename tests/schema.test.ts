@@ -80,3 +80,30 @@ describe("buildCliArgs", () => {
     expect(ok).toEqual(["task", "finish", "1", "--currentConsumed=2", "--realStarted=2026-08-18", "--finishedDate=2026-08-18"]);
   });
 });
+
+describe("buildCliArgs — CLI 0.3.1 新能力", () => {
+  it("bug list 三选一：--project / --execution 也可", () => {
+    expect(buildCliArgs({ module: "bug", action: "list", project: 5 }))
+      .toEqual(["bug", "--project=5", "--recPerPage=200"]);
+    expect(buildCliArgs({ module: "bug", action: "list", executionID: 168 }))
+      .toEqual(["bug", "--execution=168", "--recPerPage=200"]);
+  });
+
+  it("bug list 缺任意范围时报错并列出可选项", () => {
+    expect(() => buildCliArgs({ module: "bug", action: "list" })).toThrow(/product \/ project \/ execution/);
+  });
+
+  it("my 模块：动作即资源名，无需 id 与范围", () => {
+    expect(buildCliArgs({ module: "my", action: "tasks" })).toEqual(["my", "tasks", "--recPerPage=200"]);
+    expect(buildCliArgs({ module: "my", action: "bugs" })).toEqual(["my", "bugs", "--recPerPage=200"]);
+  });
+
+  it("my 模块不支持 list 动作（动作即资源名）", () => {
+    expect(() => buildCliArgs({ module: "my", action: "list" as never })).toThrow(/不支持动作/);
+  });
+
+  it("bug confirm 动作透传（0.3.1 新增）", () => {
+    expect(buildCliArgs({ module: "bug", action: "confirm", id: 42, fields: {} }))
+      .toEqual(["bug", "confirm", "42"]);
+  });
+});
