@@ -1,7 +1,7 @@
 {
   "name": "dsh-zentao",
-  "version": "0.3.1",
-  "description": "DSH 插件：1 个 zentao 薄代理工具（查询/操作禅道数据）+ 对话内表格卡片 + 右侧栏禅道概览 Tab（按工作区 .dsh-zentao.json 绑定展示任务与 Bug）。凭证由 zentao CLI 内部管理，插件不接触凭证。",
+  "version": "0.4.0",
+  "description": "DSH 插件：1 个 zentao 薄代理工具（24 模块查询/操作/筛选 + 知识库搜索 + 附件上下行）+ 对话内表格卡片 + 右侧栏禅道概览 Tab（按工作区 .dsh-zentao.json 绑定，状态筛选/分页/详情）。凭证由 zentao CLI 内部管理，插件不接触凭证。",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/types/index.d.ts",

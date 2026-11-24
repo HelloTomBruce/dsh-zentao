@@ -2,9 +2,10 @@
 
 DSH 插件：让 dsh 会话查询和操作禅道（ZenTao）数据。
 
-- **1 个 `zentao` 薄代理工具**：story/bug/task/project/execution/product/my 等 20 个模块的列表/详情/创建/更新/删除/状态流转（0.3.1 CLI 起 bug 列表支持 product/project/execution 三选一范围，新增 my 地盘模块查“指派给我的”）
+- **1 个 `zentao` 薄代理工具**：story/bug/task/project/execution/product/my 等 24 个模块的列表/详情/创建/更新/删除/状态流转，另接入 knowledge（AI 知识库搜索）/ doc（文档）/ weekly（项目周报）/ relation（对象关联）与附件上传下载
+- **查询能力**：列表默认拉取全部页；`browseType` 状态 / `filter` 条件 / `search` 关键词 / `sort` 排序 / `pick` 字段裁剪 / `maxItems` 上限（结果带 `total`/`truncated` 完整性标记）/ `htmlToMarkdown` 富文本转换
 - **对话内表格卡片**：列表/详情在 Web 客户端渲染为原生表格（`tool.call.toolview`）
-- **右侧栏 Tab 面板**：右侧侧边栏引导页【禅道概览】入口卡片（与“工作区文件”、“新建终端”、“工作区任务”并列，order 40），点击新开 Tab，按**当前工作区**的绑定配置展示该执行的任务与该范围的 Bug，面板内可直接登录禅道，支持分屏/全屏/拖拽
+- **右侧栏 Tab 面板**：右侧侧边栏引导页【禅道概览】入口卡片（与“工作区文件”、“新建终端”、“工作区任务”并列，order 40），点击新开 Tab，按**当前工作区**的绑定配置展示该执行的任务与该范围的 Bug，支持状态筛选（未关闭/进行中/已完成…）、分页、仅指派给我、详情查看与图片渲染；面板内可直接登录禅道，支持分屏/全屏/拖拽
 
 数据访问复用 `zentao` CLI（作为运行时依赖随插件安装，子进程调用），凭证由 CLI 内部管理。配置唯一来源是 dsh 用户目录下的 `zentao.json`（`$DSH_HOME/zentao.json`，默认 `~/.dsh/zentao.json`）：CLI 调用统一携带 `ZENTAO_CONFIG_FILE` 指向它，**登录在侧栏面板中完成**（凭证经 CLI 直接写入该文件）。配置不放在插件安装目录内——node_modules 会被 pnpm 更新/重装重建，dsh 用户目录不受影响，登录态跨重装、跨 profile 持久。
 
@@ -61,13 +62,15 @@ htmlToMarkdown=true                  # 富文本字段（desc/steps）转 Markdo
 ## 已知局限
 
 - `bug resolve` 必须提供 resolution + assignedTo + resolvedBuild + comment（服务端硬性要求）
-- 面板任务/Bug 视图依赖工作区 `.dsh-zentao.json` 绑定；`my` 地盘模块需要禅道服务端 ≥ 22.5
+- 面板任务/Bug 视图依赖工作区 `.dsh-zentao.json` 绑定；`my` 地盘模块需要禅道服务端 ≥ 22.5；knowledge/weekly/relation 需 ≥ 22.7；附件下载（file read）需 ≥ 23.0——低版本服务端由 CLI 自检并给出明确报错
 - **会话内请用 zentao 工具而非直接运行 `zentao` CLI**：CLI 凭证（`$DSH_HOME/zentao.json`）在 dsh 会话的 Bash 沙箱中不可达，直接跑会报 1006；插件工具走 node 宿主进程，不受沙箱影响
 
 ## 技术说明
 
-- **CLI 作为运行时依赖**：`zentao-cli@0.3.1` 随插件安装（无需全局安装），插件以 `process.execPath` 直接执行其 bin 脚本，不依赖 PATH；配置固定为 dsh 用户目录的 `zentao.json`（`ZENTAO_CONFIG_FILE` 指向它），登录由面板发起、CLI 直接写入
-- **工作区绑定**：面板读取当前工作区根目录的 `.dsh-zentao.json`（产品/执行/项目 ID），服务端据此构造 `task --executionID` / `bug --<scope>` 查询，按工作区分键缓存 60s
+- **CLI 作为运行时依赖**：`zentao-cli@0.5.0` 随插件安装（无需全局安装），插件以 `process.execPath` 直接执行其 bin 脚本，不依赖 PATH；配置固定为 dsh 用户目录的 `zentao.json`（`ZENTAO_CONFIG_FILE` 指向它），登录由面板发起、CLI 直接写入
+- **0.5.0 命令面适配**：显式 `list`/`get` 子命令；列表 `--all` 遍历全部页；写操作字段经 `--data` JSON 透传（camelCase 原样保留，数组字段如 `openedBuild` 直接给数组）；create 的 scope 字段（product/executionID/project）按模块映射为独立 flag（`--product-id` / `--product` / `--execution-id`，各模块异构）
+- **工作区绑定**：面板读取当前工作区根目录的 `.dsh-zentao.json`（产品/执行/项目 ID），服务端据此构造 `task list --execution-id` / `bug list --<scope>` 查询并用 `--fields` 裁剪到面板列；按工作区+筛选条件分键缓存 60s
+- **测试宿主包解析**：`@deepseek-ai/*` 不在 npm 依赖中——typecheck 走 tsconfig paths（兄弟仓库 `../deepseek-harness`），vitest 走 vitest.config.ts 的同名 alias（勿手工软链进 node_modules，会被 npm install 当 extraneous 清除）
 - **客户端 React external**：`lib/client.js`（CJS closure-factory）保持 react/react-dom 外部引用，由宿主注入
 - **右侧栏 Tab 集成**：`dsh.client.inject` 声明 `@deepseek-ai/dsh-client-ui-sidebar-right`（运行时注入 `sidebarRight`/`sidebarRightTabs` 服务），本地 `ambient.d.ts` 补齐席位类型（本地 harness 源码暂无该包）
 - **构建**：tsdown（node 侧 ESM + 客户端 CJS），`npm run verify` = typecheck + test + build
