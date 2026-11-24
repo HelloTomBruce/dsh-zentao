@@ -504,16 +504,16 @@ function SkeletonBar({ width, height, style }: { width: string; height: string; 
   });
 }
 
-/** 骨架屏：首屏加载占位（过滤栏 + 卡片行结构，token 驱动）。 */
-function SkeletonRows({ rows, tab }: { rows: number; tab: TabKey }) {
+/** 骨架屏：加载占位（可选过滤栏 + 卡片行结构，token 驱动）。 */
+function SkeletonRows({ rows, tab, filterBar = true }: { rows: number; tab: TabKey; filterBar?: boolean | undefined }) {
   return createElement("div", { role: "status", "aria-label": "数据加载中" },
     createElement("style", null, SKELETON_CSS),
-    // 过滤栏占位（与真实控件同高 30px，切换时布局不跳）
-    createElement("div", { style: { display: "flex", gap: "8px", marginBottom: "12px" } },
-      createElement(SkeletonBar, { width: "86px", height: "30px" }),
-      createElement(SkeletonBar, { width: "86px", height: "30px" }),
-      tab === "bugs" && createElement(SkeletonBar, { width: "86px", height: "30px" }),
-      createElement(SkeletonBar, { width: "130px", height: "30px" })),
+    // 过滤栏占位（与真实控件同高 28px，切换时布局不跳）
+    filterBar && createElement("div", { style: { display: "flex", gap: "8px", marginBottom: "12px" } },
+      createElement(SkeletonBar, { width: "86px", height: "28px" }),
+      createElement(SkeletonBar, { width: "86px", height: "28px" }),
+      tab === "bugs" && createElement(SkeletonBar, { width: "86px", height: "28px" }),
+      createElement(SkeletonBar, { width: "130px", height: "28px" })),
     // 卡片行占位（宽度错列，接近真实标题长度分布）
     ...Array.from({ length: rows }, (_, i) =>
       createElement("div", {
@@ -546,6 +546,15 @@ export function ZentaoPanelBody() {
   });
   const filterQuery = buildOverviewQuery(filterSel.tasks, filterSel.bugs);
   const { data, refresh, loading } = useOverview(workspace.path, filterQuery);
+  // 筛选切换中的列表骨架态：改动筛选即置位，新数据到达（loading 结束）自动清除
+  const [switching, setSwitching] = useState(false);
+  useEffect(() => { if (!loading) setSwitching(false); }, [loading]);
+  const applyFilter = (tab: PanelTab, patch: Partial<TabFilterState>) => {
+    setFilterSel((s) => ({ ...s, [tab]: { ...s[tab], ...patch } }));
+    setSwitching(true);
+    setSelectedRow(null);
+    setPage(1);
+  };
 
   if (workspace.path === "") {
     return createElement("div", { style: paneWrapperStyle },
@@ -606,20 +615,13 @@ export function ZentaoPanelBody() {
           onBack: () => setSelectedRow(null),
         })
       : createElement("div", { role: "tabpanel", style: { minHeight: "120px" } },
-          // 筛选切换/刷新中的顶部 shimmer 进度条（保留当前数据可见，无布局跳动）
-          loading && createElement("div", { style: { marginBottom: "8px" } },
-            createElement("style", null, SKELETON_CSS),
-            createElement(SkeletonBar, { width: "100%", height: "3px" })),
           // 快捷过滤栏：状态/优先级（Bug 加严重程度）/关键词 + 全部 vs 指派给我
           createElement("div", { style: filterBarStyle },
             createElement("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
               createElement("select", {
                 value: filterSel[tab].status,
                 onChange: (e: ChangeEvent<HTMLSelectElement>) => {
-                  const v = e.target.value;
-                  setFilterSel((s) => ({ ...s, [tab]: { ...s[tab], status: v } }));
-                  setSelectedRow(null);
-                  setPage(1);
+                  applyFilter(tab, { status: e.target.value });
                 },
                 style: filterSelectStyle,
                 "aria-label": "状态筛选",
@@ -628,10 +630,7 @@ export function ZentaoPanelBody() {
               createElement("select", {
                 value: filterSel[tab].pri,
                 onChange: (e: ChangeEvent<HTMLSelectElement>) => {
-                  const v = e.target.value;
-                  setFilterSel((s) => ({ ...s, [tab]: { ...s[tab], pri: v } }));
-                  setSelectedRow(null);
-                  setPage(1);
+                  applyFilter(tab, { pri: e.target.value });
                 },
                 style: filterSelectStyle,
                 "aria-label": "优先级筛选",
@@ -640,10 +639,7 @@ export function ZentaoPanelBody() {
               tab === "bugs" && createElement("select", {
                 value: filterSel.bugs.severity,
                 onChange: (e: ChangeEvent<HTMLSelectElement>) => {
-                  const v = e.target.value;
-                  setFilterSel((s) => ({ ...s, bugs: { ...s.bugs, severity: v } }));
-                  setSelectedRow(null);
-                  setPage(1);
+                  applyFilter("bugs", { severity: e.target.value });
                 },
                 style: filterSelectStyle,
                 "aria-label": "严重程度筛选",
@@ -654,10 +650,7 @@ export function ZentaoPanelBody() {
                 placeholder: "关键词，回车搜索",
                 onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
                   if (e.key !== "Enter") return;
-                  const v = (e.target as HTMLInputElement).value;
-                  setFilterSel((s) => ({ ...s, [tab]: { ...s[tab], search: v } }));
-                  setSelectedRow(null);
-                  setPage(1);
+                  applyFilter(tab, { search: (e.target as HTMLInputElement).value });
                 },
                 style: filterSearchStyle,
                 "aria-label": "关键词搜索",
@@ -673,14 +666,17 @@ export function ZentaoPanelBody() {
             ),
             myRealname && createElement("span", { style: userTagStyle }, `账号: ${myRealname}`),
           ),
-          createElement(RowList, {
-            rows: displayRows,
-            nameKey: tab === "tasks" ? "name" : "title",
-            type: tab,
-            page,
-            onPageChange: (newPage) => setPage(newPage),
-            onSelect: (row) => setSelectedRow(row),
-          }),
+          // 筛选切换中：列表区换骨架行（新数据到达自动恢复）
+          switching
+            ? createElement(SkeletonRows, { rows: 5, tab, filterBar: false })
+            : createElement(RowList, {
+                rows: displayRows,
+                nameKey: tab === "tasks" ? "name" : "title",
+                type: tab,
+                page,
+                onPageChange: (newPage) => setPage(newPage),
+                onSelect: (row) => setSelectedRow(row),
+              }),
         ),
 
     createElement("div", { style: { height: "16px" } }),
@@ -731,22 +727,22 @@ const filterBtnStyle = (active: boolean): CSSProperties => ({
   color: active ? "#fff" : T.textSecondary,
   cursor: "pointer",
   padding: "0 12px",
-  height: "30px",
+  height: "28px",
   fontSize: T.fontXxs,
   fontWeight: active ? "600" : "400",
   borderRadius: T.radiusSm,
   transition: `all ${T.durationFast} ${T.easeInOut}`,
 });
 
-/** 筛选下拉：30px 高、13px 字号的标准控件（token 驱动，深浅主题自适应）。 */
+/** 筛选下拉：28px 高、12px 字号的标准控件（token 驱动，深浅主题自适应）。 */
 const filterSelectStyle: CSSProperties = {
   border: `1px solid ${T.border}`,
   background: T.surface,
   color: T.text,
   cursor: "pointer",
   padding: "0 8px",
-  height: "30px",
-  fontSize: T.fontXs,
+  height: "28px",
+  fontSize: T.fontXxs,
   borderRadius: T.radiusSm,
   outline: "none",
 };
@@ -757,8 +753,8 @@ const filterSearchStyle: CSSProperties = {
   background: T.surface,
   color: T.text,
   padding: "0 10px",
-  height: "30px",
-  fontSize: T.fontXs,
+  height: "28px",
+  fontSize: T.fontXxs,
   borderRadius: T.radiusSm,
   outline: "none",
   width: "130px",
