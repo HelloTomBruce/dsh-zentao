@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { buildOverviewQuery, DEFAULT_FILTER_KEY, defaultTabFilter, FILTER_OPTIONS, normalizeOverview, openRowCount, type OverviewRow, type TabFilterState } from "../../src/client/overview.js";
-import { sanitizeAndFormatHtml } from "../../src/client/panel.js";
+import { sanitizeAndFormatHtml } from "../../src/client/sanitize.js";
 
 const f = (tab: "tasks" | "bugs", patch: Partial<TabFilterState> = {}): TabFilterState => ({ ...defaultTabFilter(tab), ...patch });
 

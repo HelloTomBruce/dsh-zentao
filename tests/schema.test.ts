@@ -249,3 +249,16 @@ describe("buildCliArgs — 0.5.0 新模块（knowledge/doc/weekly/relation）与
     expect(() => buildCliArgs({ module: "doc", action: "get", id: 5, sort: "id:asc" })).toThrow(/列表式动作/);
   });
 });
+
+describe("kebab 分词（缩写词边界）", () => {
+  it("通过 file create 的 flag 输出验证各缩写形态", () => {
+    const args = buildCliArgs({
+      module: "file", action: "create",
+      fields: { file: "/a.png", objectID: 1, lastRunDate: "2026-01-01", libIDs: [12], URL: "http://x" },
+    });
+    expect(args).toContain("--object-id=1");
+    expect(args).toContain("--lib-ids=12");
+    expect(args).toContain("--last-run-date=2026-01-01");
+    expect(args).toContain("--url=http://x");
+  });
+});

@@ -8,20 +8,13 @@
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { WorkspaceBinding } from "../views.ts";
 
 /** 工作区配置文件名（位于工作区根目录）。 */
 export const WORKSPACE_CONFIG_FILENAME = ".dsh-zentao.json";
 
-export interface WorkspaceConfig {
-  /** 产品 ID（Bug 视图优先使用）。 */
-  product?: number;
-  /** 项目 ID（Bug 视图备选范围）。 */
-  project?: number;
-  /** 执行 ID（任务视图必需；Bug 视图末选范围；多执行绑定时为默认选中项）。 */
-  execution?: number;
-  /** 可选执行列表（executions 数组绑定；任务视图提供切换下拉）。含 execution 本身。 */
-  executions?: number[];
-}
+/** 工作区绑定（registry 单源形状）。 */
+export type WorkspaceConfig = WorkspaceBinding;
 
 export type ReadResult =
   | { ok: true; config: WorkspaceConfig | null }
@@ -67,9 +60,13 @@ export function parseWorkspaceConfig(raw: string): { config: WorkspaceConfig | n
         if (!list.includes(num)) list.push(num);
       }
       if (!bad.includes("executions") && list.length > 0) {
-        config.executions = list;
+        // 显式 execution 不在数组中时并入首位置——保证切换下拉 value 与查询一致
+        const merged = config.execution !== undefined && !list.includes(config.execution)
+          ? [config.execution, ...list]
+          : list;
+        config.executions = merged;
         // 单 execution 缺省时取数组首项为默认选中
-        const first = list[0];
+        const first = merged[0];
         if (config.execution === undefined && first !== undefined) config.execution = first;
       }
     }

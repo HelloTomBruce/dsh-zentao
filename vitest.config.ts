@@ -19,6 +19,9 @@ export default defineConfig({
       "@deepseek-ai/dsh-tools": r("../deepseek-harness/packages/core/tools/lib/index.js"),
       "@deepseek-ai/dsh-system-prompt": r("../deepseek-harness/packages/core/system-prompt/lib/index.js"),
       "@deepseek-ai/dsh-host-webserver": r("../deepseek-harness/packages/host/webserver/lib/index.js"),
+      // client 包（当前测试未直接 import，补全与 tsconfig paths 对齐，防止后续测试解析失败）
+      "@deepseek-ai/dsh-client-runtime/client": r("../deepseek-harness/packages/client/runtime/lib/types/client/index.js"),
+      "@deepseek-ai/dsh-client-ui-slots": r("../deepseek-harness/packages/client/ui-slots/lib/index.js"),
     },
   },
 });

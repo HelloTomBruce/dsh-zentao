@@ -10,7 +10,8 @@ import type { Context } from "@deepseek-ai/cordis";
 import type {} from "@deepseek-ai/dsh-host-webserver";
 import { runZentao, runZentaoLoose, asCliError } from "./lib/cli.ts";
 import { readCurrentProfileInfo, type CurrentProfileInfo } from "./lib/config.ts";
-import { bugScopeOf, readWorkspaceConfig, WORKSPACE_CONFIG_FILENAME, type WorkspaceConfig } from "./lib/workspace-config.ts";
+import { readWorkspaceConfig, WORKSPACE_CONFIG_FILENAME } from "./lib/workspace-config.ts";
+import { VIEWS, VIEW_KEYS, isViewKey, type ViewKey, type WorkspaceBinding } from "./views.ts";
 
 export const OVERVIEW_PATH = "/__dsh-zentao__/overview";
 export const LOGIN_PATH = "/__dsh-zentao__/login";
@@ -29,9 +30,12 @@ export interface OverviewRow {
   [key: string]: unknown;
 }
 
-/** 概览视图（按视图懒加载）。 */
-export type OverviewView = "tasks" | "bugs" | "stories" | "testtasks" | "testcases";
-export const OVERVIEW_VIEWS: readonly OverviewView[] = ["tasks", "bugs", "stories", "testtasks", "testcases"];
+/** 工作区绑定（registry 单源形状；兼容旧引用名）。 */
+export type WorkspaceConfig = WorkspaceBinding;
+
+/** 概览视图 key（registry 单源：src/views.ts）。 */
+export type OverviewView = ViewKey;
+export const OVERVIEW_VIEWS: readonly OverviewView[] = VIEW_KEYS;
 
 export interface OverviewViewData {
   /** 本次返回的视图。 */
@@ -106,53 +110,6 @@ export interface PanelFilters {
 /** 概览查询的每页条数：默认 20 页大小会把大执行拖成上百页，200 显著减页数（实测 103→11 页、3x 提速）。 */
 const OVERVIEW_PAGE_SIZE = 200;
 
-interface ViewDef {
-  /** CLI 模块名。 */
-  module: "task" | "bug" | "story" | "testtask" | "testcase";
-  /** --fields 裁剪列。 */
-  fields: string;
-  /** 由绑定配置生成 scope 参数；null = 该视图缺绑定（返回空 + note）。 */
-  scopeArgs: (config: WorkspaceConfig) => string[] | null;
-  /** scope 缺失时的提示。 */
-  missingNote: (filename: string) => string;
-}
-
-const VIEW_DEFS: Record<OverviewView, ViewDef> = {
-  tasks: {
-    module: "task",
-    fields: TASK_PANEL_FIELDS,
-    scopeArgs: (c) => (c.execution !== undefined ? [`--execution-id=${c.execution}`] : null),
-    missingNote: (f) => `配置缺 execution，任务视图为空（在 ${f} 中补充）`,
-  },
-  bugs: {
-    module: "bug",
-    fields: BUG_PANEL_FIELDS,
-    scopeArgs: (c) => {
-      const s = bugScopeOf(c);
-      return s === null ? null : [`${s.flag}=${s.value}`];
-    },
-    missingNote: (f) => `配置缺 product / project / execution，Bug 视图为空（在 ${f} 中补充）`,
-  },
-  stories: {
-    module: "story",
-    fields: STORY_PANEL_FIELDS,
-    scopeArgs: (c) => (c.product !== undefined ? [`--product=${c.product}`] : null),
-    missingNote: (f) => `配置缺 product，需求视图为空（在 ${f} 中补充）`,
-  },
-  testtasks: {
-    module: "testtask",
-    fields: TESTTASK_PANEL_FIELDS,
-    scopeArgs: (c) => (c.product !== undefined ? [`--product=${c.product}`] : null),
-    missingNote: (f) => `配置缺 product，测试单视图为空（在 ${f} 中补充）`,
-  },
-  testcases: {
-    module: "testcase",
-    fields: TESTCASE_PANEL_FIELDS,
-    scopeArgs: (c) => (c.product !== undefined ? [`--product=${c.product}`] : null),
-    missingNote: (f) => `配置缺 product，用例视图为空（在 ${f} 中补充）`,
-  },
-};
-
 export type ViewQueryFn = () => Promise<unknown>;
 
 /**
@@ -166,7 +123,7 @@ export function createViewQuery(
   filters: PanelFilters = {},
   run?: (args: string[]) => Promise<unknown>,
 ): ViewQueryFn | null {
-  const def = VIEW_DEFS[view];
+  const def = VIEWS[view];
   const scope = def.scopeArgs(config);
   if (scope === null) return null;
   const runData = run ?? (async (args: string[]) => (await runZentao(args)).data);
@@ -188,7 +145,7 @@ export async function overviewViewData(
   query: ViewQueryFn | null,
   profileInfo: CurrentProfileInfo | null = readCurrentProfileInfo(),
 ): Promise<OverviewViewData> {
-  const def = VIEW_DEFS[view];
+  const def = VIEWS[view];
   const base: OverviewViewData = {
     view,
     rows: [],
@@ -495,7 +452,7 @@ export function overviewViewOf(req: IncomingMessage): OverviewView | null {
   const match = /[?&]view=([^&]*)/.exec(req.url ?? "");
   if (match === null || match[1] === undefined || match[1] === "") return "tasks";
   const value = match[1];
-  return (OVERVIEW_VIEWS as readonly string[]).includes(value) ? (value as OverviewView) : null;
+  return isViewKey(value) ? (value as OverviewView) : null;
 }
 
 /** 缓存键：工作区 + 视图 + execution 覆盖 + 筛选参数（相互独立缓存）。 */
@@ -667,7 +624,7 @@ export function registerDetailApi(ctx: Context, run: RunFn = runZentao): () => v
       }
       const task = (async () => {
         try {
-          const module = VIEW_DEFS[view].module;
+          const module = VIEWS[view].module;
           // runZentao 返回 {data, meta} 信封——解包 data（完整对象）；缺失时显式报错
           const result = await run([module, "get", String(id)]) as { data?: unknown };
           if (result.data === undefined) {

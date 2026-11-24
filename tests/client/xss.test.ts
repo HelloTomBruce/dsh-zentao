@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { sanitizeAndFormatHtml } from "../../src/client/panel.js";
+import { sanitizeAndFormatHtml } from "../../src/client/sanitize.js";
 
 /** 对抗性用例：任何事件处理器 / javascript: / 未知标签都不得到达 innerHTML。 */
 describe("sanitizeAndFormatHtml — XSS 对抗", () => {

@@ -136,12 +136,14 @@ function scopeValueOf(args: ZentaoArgs, flags: readonly string[]): { flag: strin
   return undefined;
 }
 
-/** camelCase 字段名转 CLI 的 kebab-case flag 名（realStarted → real-started，objectID → object-id）。 */
+/**
+ * camelCase → kebab-case（按词切分）：大写连续段（含尾随 s，如 IDs/URLs）整体
+ * 为一个词——objectID → object-id、libIDs → lib-ids、realStarted → real-started、
+ * XMLHttp → xml-http。无缩写清单的特判，缩写自然按「连续大写」分组。
+ */
 function kebab(key: string): string {
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
-    .toLowerCase();
+  const words = key.match(/[A-Z]{2,}s?(?=[A-Z][a-z]|$)|[A-Z][a-z0-9]*|[a-z0-9]+/g) ?? [key];
+  return words.map((w) => w.toLowerCase()).join("-");
 }
 
 /** file 模块专用：fields → kebab-case flag 列表（multipart formdata 不支持 --data）。 */
@@ -190,14 +192,25 @@ function isListLike(module: ZentaoModule, action: ZentaoAction): boolean {
  * 独立 flag，其余经 --data 透传。模型在 fields 里写 execution 或 executionID
  * 均可（统一归一为 executionID 查表）。
  */
-function createArgs(info: ModuleInfo, fields: FieldMap | undefined): string[] {
+function createArgs(info: ModuleInfo, module: ZentaoModule, fields: FieldMap | undefined): string[] {
   const scopeMap = info.createScope ?? {};
   const scopeArgs: string[] = [];
   const rest: FieldMap = {};
+  const unmappedScope: string[] = [];
   for (const [k, v] of Object.entries(fields ?? {})) {
     const flag = scopeMap[k as ScopeField] ?? (k === "execution" ? scopeMap.executionID : undefined);
     if (flag !== undefined) scopeArgs.push(`${flag}=${String(v)}`);
-    else rest[k] = v;
+    else {
+      // scope 类字段未映射 = 该模块 create 不接受它（混入 --data 会被 CLI 以晦涩
+      // 信息拒绝）——插件层直接给出应使用的 scope 字段
+      if (k === "product" || k === "project" || k === "executionID" || k === "execution") unmappedScope.push(k);
+      rest[k] = v;
+    }
+  }
+  if (unmappedScope.length > 0 && Object.keys(scopeMap).length > 0) {
+    throw new Error(
+      `${info.label}(${module}) create 的范围字段应为 ${Object.entries(scopeMap).map(([k, f]) => `${k}→${f}`).join("、")}，不支持 ${unmappedScope.join("、")}`,
+    );
   }
   return [...scopeArgs, ...dataArgs(rest)];
 }
@@ -279,10 +292,14 @@ export function buildCliArgs(args: ZentaoArgs): string[] {
   }
 
   // 附件下载：file read <id> --output <路径>（默认 .dsh-zentao/attachments/file-<id>，
-  // 相对路径基于 dsh 宿主工作目录；需服务端 ≥ 23.0）
+  // 相对路径基于 dsh 宿主工作目录；需服务端 ≥ 23.0）。saveTo 拒绝绝对路径与 ..
+  // 上跳——模型可写参数不应有越出宿主工作目录的文件写入能力
   if (module === "file" && action === "read") {
     if (id === undefined) throw new Error(`${info.label}(file) read 需要 id（附件 ID）`);
     const saveTo = fields?.saveTo !== undefined ? String(fields.saveTo) : `.dsh-zentao/attachments/file-${id}`;
+    if (/^([a-zA-Z]:|\\|\/)/.test(saveTo) || saveTo.split(/[\\/]/).includes("..")) {
+      throw new Error(`saveTo 必须是相对路径且不得包含 .. 上跳（默认基于 dsh 宿主工作目录），收到：${saveTo}`);
+    }
     return ["file", "read", String(id), "--output", saveTo];
   }
 
@@ -314,7 +331,7 @@ export function buildCliArgs(args: ZentaoArgs): string[] {
   if (action === "create") {
     // file create 为 multipart formdata（不支持 JSON），字段走 kebab flag
     if (module === "file") return [module, "create", ...flagArgs(fields)];
-    return [module, "create", ...createArgs(info, fields)];
+    return [module, "create", ...createArgs(info, module, fields)];
   }
 
   if (action === "update") {
