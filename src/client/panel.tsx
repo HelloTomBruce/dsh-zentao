@@ -11,6 +11,7 @@ import type { OverviewResponse, PanelTab, TabFilterState } from "./overview.ts";
 import { buildOverviewQuery, defaultTabFilter, FILTER_OPTIONS, overviewSummary, PRI_OPTIONS, SEVERITY_OPTIONS } from "./overview.ts";
 import { useActiveWorkspace } from "./workspace.ts";
 import { ZentaoTabIcon } from "./icons.tsx";
+import { T } from "./theme.ts";
 
 const OVERVIEW_URL = "/__dsh-zentao__/overview";
 const LOGIN_URL = "/__dsh-zentao__/login";
@@ -45,28 +46,24 @@ function useOverview(workspacePath: string, filterQuery: string): { data: Overvi
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> = {
-  wait: { label: "未开始", color: "#b45309", bg: "#fef3c7" },
-  doing: { label: "进行中", color: "#2563eb", bg: "#dbeafe" },
-  done: { label: "已完成", color: "#16a34a", bg: "#dcfce7" },
-  pause: { label: "已暂停", color: "#6b7280", bg: "#f3f4f6" },
-  cancel: { label: "已取消", color: "#6b7280", bg: "#f3f4f6" },
-  closed: { label: "已关闭", color: "#6b7280", bg: "#f3f4f6" },
-  active: { label: "激活", color: "#dc2626", bg: "#fee2e2" },
-  resolved: { label: "已解决", color: "#059669", bg: "#d1fae5" },
+  wait: { label: "未开始", color: T.warn, bg: T.warnSoft },
+  doing: { label: "进行中", color: T.accent, bg: T.accentSoft },
+  done: { label: "已完成", color: T.success, bg: T.successSoft },
+  pause: { label: "已暂停", color: T.textTertiary, bg: T.surfaceMuted },
+  cancel: { label: "已取消", color: T.textTertiary, bg: T.surfaceMuted },
+  closed: { label: "已关闭", color: T.textTertiary, bg: T.surfaceMuted },
+  active: { label: "激活", color: T.danger, bg: T.dangerSoft },
+  resolved: { label: "已解决", color: T.success, bg: T.successSoft },
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const meta = STATUS_MAP[status] ?? {
-    label: status,
-    color: "var(--dsh-text-secondary, #6b7280)",
-    bg: "var(--dsh-surface-muted, #f3f4f6)",
-  };
+  const meta = STATUS_MAP[status] ?? { label: status, color: T.textSecondary, bg: T.surfaceMuted };
   return createElement("span", {
     style: {
-      fontSize: "11px",
+      fontSize: T.fontXxs,
       fontWeight: "600",
-      padding: "2px 6px",
-      borderRadius: "4px",
+      padding: "2px 8px",
+      borderRadius: T.radiusXs,
       background: meta.bg,
       color: meta.color,
       whiteSpace: "nowrap",
@@ -79,18 +76,20 @@ function StatusBadge({ status }: { status: string }) {
 function PriBadge({ pri }: { pri: unknown }) {
   if (pri === undefined || pri === null || pri === "" || pri === "0" || pri === 0) return null;
   const p = String(pri);
-  const bg = p === "1" ? "#fee2e2" : p === "2" ? "#ffedd5" : p === "3" ? "#eff6ff" : "#f3f4f6";
-  const color = p === "1" ? "#b91c1c" : p === "2" ? "#c2410c" : p === "3" ? "#1d4ed8" : "#4b5563";
+  const theme = p === "1" ? { bg: T.dangerSoft, color: T.danger }
+    : p === "2" ? { bg: T.warnSoft, color: T.warn }
+      : p === "3" ? { bg: T.accentSoft, color: T.accent }
+        : { bg: T.surfaceMuted, color: T.textSecondary };
   return createElement("span", {
     style: {
-      fontSize: "10px",
+      fontSize: "11px",
       fontWeight: "700",
-      padding: "1px 5px",
-      borderRadius: "4px",
-      background: bg,
-      color,
-      marginRight: "5px",
-      lineHeight: "14px",
+      padding: "1px 6px",
+      borderRadius: T.radiusXs,
+      background: theme.bg,
+      color: theme.color,
+      marginRight: "6px",
+      lineHeight: "15px",
       display: "inline-block",
       flexShrink: 0,
     },
@@ -138,14 +137,14 @@ export function sanitizeAndFormatHtml(text: string): string {
         const trimmed = p.trim();
         if (!trimmed) return "";
         const formatted = trimmed
-          .replace(/\[(步骤|结果|期望|其它|其他)\]/g, `<strong style="color: var(--dsh-accent, #2563eb); display: block; margin: 6px 0 2px 0;">[$1]</strong>`)
+          .replace(/\[(步骤|结果|期望|其它|其他)\]/g, `<strong style="color: var(--dsw-alias-state-business-primary, #2563eb); display: block; margin: 6px 0 2px 0;">[$1]</strong>`)
           .replace(/\r?\n/g, "<br />");
         return `<p style="margin: 4px 0;">${formatted}</p>`;
       })
       .filter(Boolean)
       .join("");
   } else {
-    s = s.replace(/\[(步骤|结果|期望|其它|其他)\]/g, `<strong style="color: var(--dsh-accent, #2563eb); display: block; margin: 6px 0 2px 0;">[$1]</strong>`);
+    s = s.replace(/\[(步骤|结果|期望|其它|其他)\]/g, `<strong style="color: var(--dsw-alias-state-business-primary, #2563eb); display: block; margin: 6px 0 2px 0;">[$1]</strong>`);
   }
 
   return s;
@@ -227,7 +226,7 @@ function DetailView({
           cursor: zoom-in;
           display: block;
           box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-          border: 1px solid var(--dsh-border, #e3e6ea);
+          border: 1px solid var(--dsw-alias-border-l2, #e3e6ea);
         }
         .dsh-zentao-desc p { margin: 4px 0; }
       `),
@@ -304,7 +303,7 @@ function RowList({
           createElement("span", null, `👤 ${assigned}`),
           deadline && createElement("span", null, `📅 ${deadline}`),
           metaExtra && createElement("span", null, isTask ? `⏱️ ${metaExtra}` : `🔥 ${metaExtra}`),
-          createElement("span", { style: { marginLeft: "auto", color: "var(--dsh-accent, #2f6fed)", fontSize: "11px" } }, "详情 →"),
+          createElement("span", { style: { marginLeft: "auto", color: "var(--dsw-alias-state-business-primary, #2f6fed)", fontSize: "11px" } }, "详情 →"),
         ),
       );
     }),
@@ -325,21 +324,21 @@ function RowList({
 }
 
 const sectionTitleStyle: CSSProperties = {
-  fontSize: "12px", fontWeight: "600", color: "var(--dsh-text-secondary, #6b7280)",
+  fontSize: "12px", fontWeight: "600", color: "var(--dsw-alias-label-secondary, #6b7280)",
   marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.04em",
 };
 const emptyStyle: CSSProperties = {
-  padding: "10px", color: "var(--dsh-text-secondary, #6b7280)", fontSize: "13px",
-  border: "1px dashed var(--dsh-border, #e3e6ea)", borderRadius: "6px", textAlign: "center",
+  padding: "10px", color: "var(--dsw-alias-label-secondary, #6b7280)", fontSize: "13px",
+  border: "1px dashed var(--dsw-alias-border-l2, #e3e6ea)", borderRadius: "6px", textAlign: "center",
 };
 const hintStyle: CSSProperties = {
-  fontSize: "12px", color: "var(--dsh-text-secondary, #6b7280)",
+  fontSize: "12px", color: "var(--dsw-alias-label-secondary, #6b7280)",
   whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.6,
 };
 const codeStyle: CSSProperties = {
   display: "block", margin: "6px 0", padding: "8px 10px",
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: "12px",
-  background: "var(--dsh-surface-muted, #f5f6f8)", border: "1px solid var(--dsh-border, #e3e6ea)",
+  background: "var(--dsw-alias-bg-layer-2, #f5f6f8)", border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
   borderRadius: "6px", whiteSpace: "pre-wrap", wordBreak: "break-all",
 };
 
@@ -409,26 +408,26 @@ function LoginForm({ onLoggedIn, onClose }: { onLoggedIn: () => void; onClose?: 
 
 const loginFieldStyle: CSSProperties = { display: "block", marginBottom: "8px" };
 const loginLabelStyle: CSSProperties = {
-  display: "block", fontSize: "12px", color: "var(--dsh-text-secondary, #6b7280)", marginBottom: "3px",
+  display: "block", fontSize: "12px", color: "var(--dsw-alias-label-secondary, #6b7280)", marginBottom: "3px",
 };
 const loginInputStyle: CSSProperties = {
   width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "13px",
-  border: "1px solid var(--dsh-border, #e3e6ea)", borderRadius: "6px",
-  background: "var(--dsh-surface, #fff)", color: "inherit",
+  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)", borderRadius: "6px",
+  background: "var(--dsw-alias-bg-layer-1, #fff)", color: "inherit",
 };
 const loginErrorStyle: CSSProperties = {
-  fontSize: "12px", color: "var(--dsh-danger, #dc2626)", margin: "4px 0 8px",
+  fontSize: "12px", color: "var(--dsw-alias-state-error-primary, #dc2626)", margin: "4px 0 8px",
   whiteSpace: "pre-wrap", wordBreak: "break-all",
 };
 
 /** 登录成功提示：绿色对勾文案，明确告知后续行为。 */
 const loginSuccessStyle: CSSProperties = {
-  fontSize: "12px", color: "var(--dsh-success, #16a34a)", margin: "4px 0 10px", fontWeight: 600,
+  fontSize: "12px", color: "var(--dsw-alias-state-success-primary, #16a34a)", margin: "4px 0 10px", fontWeight: 600,
 };
 const loginSubmitStyle = (pending: boolean): CSSProperties => ({
   width: "100%", padding: "7px 0", fontSize: "13px", fontWeight: "600",
   border: "none", borderRadius: "6px", cursor: pending ? "default" : "pointer",
-  background: "var(--dsh-accent, #2f6fed)", color: "#fff", opacity: pending ? 0.7 : 1,
+  background: "var(--dsw-alias-state-business-primary, #2f6fed)", color: "#fff", opacity: pending ? 0.7 : 1,
 });
 
 type TabKey = "tasks" | "bugs";
@@ -452,7 +451,7 @@ const titleWrapperStyle: CSSProperties = {
 const countBadgeStyle: CSSProperties = {
   marginLeft: 6, padding: "0 6px", borderRadius: 999,
   fontSize: 11, fontWeight: 600, lineHeight: "16px",
-  background: "var(--dsh-accent, #2f6fed)", color: "#fff",
+  background: "var(--dsw-alias-state-business-primary, #2f6fed)", color: "#fff",
 };
 
 /** 未配置工作区绑定的引导态：文件路径 + 格式示例。 */
@@ -470,6 +469,65 @@ function UnconfiguredGuide({ workspace, onRefresh }: {
     createElement("div", { style: hintStyle },
       "创建后点击下方刷新即可按该范围展示任务与 Bug。产品 / 执行的 ID 可在对话中用 zentao 工具查询（如 zentao 模块=product 动作=list）。"),
     createElement("button", { onClick: onRefresh, style: reloginLinkStyle }, "刷新"),
+  );
+}
+
+/** 骨架屏 shimmer 动画（<style> 注入；inline style 无法写 keyframes）。 */
+const SKELETON_CSS = `
+@keyframes dshZentaoShimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+.dsh-zentao-skeleton {
+  position: relative; overflow: hidden;
+  background: ${T.skeleton};
+  border-radius: ${T.radiusXs};
+}
+.dsh-zentao-skeleton::after {
+  content: ""; position: absolute; inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  animation: dshZentaoShimmer 1.4s infinite;
+}
+@media (prefers-color-scheme: dark) {
+  .dsh-zentao-skeleton::after {
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  }
+}
+`;
+
+/** 骨架条：单个占位块（shimmer 扫光）。 */
+function SkeletonBar({ width, height, style }: { width: string; height: string; style?: CSSProperties | undefined }) {
+  return createElement("div", {
+    className: "dsh-zentao-skeleton",
+    style: { width, height, ...(style ?? {}) },
+  });
+}
+
+/** 骨架屏：首屏加载占位（过滤栏 + 卡片行结构，token 驱动）。 */
+function SkeletonRows({ rows, tab }: { rows: number; tab: TabKey }) {
+  return createElement("div", { role: "status", "aria-label": "数据加载中" },
+    createElement("style", null, SKELETON_CSS),
+    // 过滤栏占位（与真实控件同高 30px，切换时布局不跳）
+    createElement("div", { style: { display: "flex", gap: "8px", marginBottom: "12px" } },
+      createElement(SkeletonBar, { width: "86px", height: "30px" }),
+      createElement(SkeletonBar, { width: "86px", height: "30px" }),
+      tab === "bugs" && createElement(SkeletonBar, { width: "86px", height: "30px" }),
+      createElement(SkeletonBar, { width: "130px", height: "30px" })),
+    // 卡片行占位（宽度错列，接近真实标题长度分布）
+    ...Array.from({ length: rows }, (_, i) =>
+      createElement("div", {
+        key: i,
+        style: {
+          display: "flex", flexDirection: "column", gap: "7px",
+          padding: "12px", marginBottom: "8px",
+          border: `1px solid ${T.borderSubtle}`, borderRadius: T.radiusSm,
+        },
+      },
+        createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px" } },
+          createElement(SkeletonBar, { width: "44px", height: "14px" }),
+          createElement(SkeletonBar, { width: `${52 + ((i * 17) % 30)}%`, height: "14px" })),
+        createElement(SkeletonBar, { width: "36%", height: "11px" }))),
   );
 }
 
@@ -496,7 +554,7 @@ export function ZentaoPanelBody() {
       createElement("button", { onClick: workspace.refresh, style: reloginLinkStyle }, "重试"));
   }
   if (data === null) return createElement("div", { style: paneWrapperStyle },
-    createElement("div", { style: emptyStyle }, "加载中…"));
+    createElement(SkeletonRows, { rows: 6, tab }));
   if (data.unconfigured === true) return createElement(UnconfiguredGuide, { workspace, onRefresh: refresh });
   if (data.error !== undefined) {
     return createElement("div", { style: paneWrapperStyle },
@@ -548,6 +606,10 @@ export function ZentaoPanelBody() {
           onBack: () => setSelectedRow(null),
         })
       : createElement("div", { role: "tabpanel", style: { minHeight: "120px" } },
+          // 筛选切换/刷新中的顶部 shimmer 进度条（保留当前数据可见，无布局跳动）
+          loading && createElement("div", { style: { marginBottom: "8px" } },
+            createElement("style", null, SKELETON_CSS),
+            createElement(SkeletonBar, { width: "100%", height: "3px" })),
           // 快捷过滤栏：状态/优先级（Bug 加严重程度）/关键词 + 全部 vs 指派给我
           createElement("div", { style: filterBarStyle },
             createElement("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
@@ -627,7 +689,7 @@ export function ZentaoPanelBody() {
       : createElement("div", { style: { display: "flex", gap: "12px", alignItems: "center" } },
           createElement("button", { onClick: refresh, style: reloginLinkStyle }, "刷新数据"),
           loading && createElement("span", { style: hintStyle }, "刷新中…"),
-          createElement("span", { style: { color: "var(--dsh-border, #e3e6ea)", fontSize: "12px" } }, "|"),
+          createElement("span", { style: { color: "var(--dsw-alias-border-l2, #e3e6ea)", fontSize: "12px" } }, "|"),
           createElement("button", { onClick: () => setShowLogin(true), style: reloginLinkStyle }, "重新登录 / 切换账号")),
   );
 }
@@ -639,20 +701,20 @@ const paneWrapperStyle: CSSProperties = {
 
 const tabBarStyle: CSSProperties = {
   display: "flex", gap: "4px", marginBottom: "10px",
-  borderBottom: "1px solid var(--dsh-border, #e3e6ea)",
+  borderBottom: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
 };
 const tabStyle = (active: boolean): CSSProperties => ({
   border: "none", background: "transparent", cursor: "pointer",
   padding: "6px 10px", fontSize: "13px",
   fontWeight: active ? "600" : "400",
-  color: active ? "var(--dsh-accent, #2f6fed)" : "var(--dsh-text-secondary, #6b7280)",
-  borderBottom: active ? "2px solid var(--dsh-accent, #2f6fed)" : "2px solid transparent",
+  color: active ? "var(--dsw-alias-state-business-primary, #2f6fed)" : "var(--dsw-alias-label-secondary, #6b7280)",
+  borderBottom: active ? "2px solid var(--dsw-alias-state-business-primary, #2f6fed)" : "2px solid transparent",
   marginBottom: "-1px",
 });
 
 const reloginLinkStyle: CSSProperties = {
   border: "none", background: "transparent", cursor: "pointer", padding: "0",
-  fontSize: "12px", color: "var(--dsh-text-secondary, #6b7280)", textDecoration: "underline",
+  fontSize: "12px", color: "var(--dsw-alias-label-secondary, #6b7280)", textDecoration: "underline",
 };
 
 const filterBarStyle: CSSProperties = {
@@ -664,50 +726,53 @@ const filterBarStyle: CSSProperties = {
 };
 
 const filterBtnStyle = (active: boolean): CSSProperties => ({
-  border: active ? "1px solid var(--dsh-accent, #2f6fed)" : "1px solid var(--dsh-border, #e3e6ea)",
-  background: active ? "var(--dsh-accent, #2f6fed)" : "var(--dsh-surface, #fff)",
-  color: active ? "#fff" : "var(--dsh-text-secondary, #6b7280)",
+  border: active ? `1px solid ${T.accent}` : `1px solid ${T.border}`,
+  background: active ? T.accent : T.surface,
+  color: active ? "#fff" : T.textSecondary,
   cursor: "pointer",
-  padding: "3px 9px",
-  fontSize: "11px",
+  padding: "0 12px",
+  height: "30px",
+  fontSize: T.fontXxs,
   fontWeight: active ? "600" : "400",
-  borderRadius: "12px",
-  transition: "all 0.15s ease",
+  borderRadius: T.radiusSm,
+  transition: `all ${T.durationFast} ${T.easeInOut}`,
 });
 
-/** 状态筛选下拉：与过滤按钮同高的小型 select。 */
+/** 筛选下拉：30px 高、13px 字号的标准控件（token 驱动，深浅主题自适应）。 */
 const filterSelectStyle: CSSProperties = {
-  border: "1px solid var(--dsh-border, #e3e6ea)",
-  background: "var(--dsh-surface, #fff)",
-  color: "var(--dsh-text, #1f2329)",
+  border: `1px solid ${T.border}`,
+  background: T.surface,
+  color: T.text,
   cursor: "pointer",
-  padding: "3px 6px",
-  fontSize: "11px",
-  borderRadius: "12px",
+  padding: "0 8px",
+  height: "30px",
+  fontSize: T.fontXs,
+  borderRadius: T.radiusSm,
   outline: "none",
 };
 
-/** 关键词搜索输入：与筛选下拉同风格的小型输入框。 */
+/** 关键词搜索输入：与筛选下拉同高的输入框。 */
 const filterSearchStyle: CSSProperties = {
-  border: "1px solid var(--dsh-border, #e3e6ea)",
-  background: "var(--dsh-surface, #fff)",
-  color: "var(--dsh-text, #1f2329)",
-  padding: "3px 8px",
-  fontSize: "11px",
-  borderRadius: "12px",
+  border: `1px solid ${T.border}`,
+  background: T.surface,
+  color: T.text,
+  padding: "0 10px",
+  height: "30px",
+  fontSize: T.fontXs,
+  borderRadius: T.radiusSm,
   outline: "none",
-  width: "110px",
+  width: "130px",
 };
 
 const userTagStyle: CSSProperties = {
   fontSize: "11px",
-  color: "var(--dsh-text-secondary, #6b7280)",
+  color: "var(--dsw-alias-label-secondary, #6b7280)",
 };
 
 const rowCardStyle: CSSProperties = {
   padding: "8px 10px",
-  background: "var(--dsh-surface, #fff)",
-  border: "1px solid var(--dsh-border, #e3e6ea)",
+  background: "var(--dsw-alias-bg-layer-1, #fff)",
+  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
   borderRadius: "6px",
   cursor: "pointer",
   display: "flex",
@@ -719,7 +784,7 @@ const rowCardStyle: CSSProperties = {
 const rowTitleStyle: CSSProperties = {
   fontSize: "13px",
   fontWeight: "600",
-  color: "var(--dsh-text, #1f2937)",
+  color: "var(--dsw-alias-label-primary, #1f2937)",
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
@@ -731,23 +796,23 @@ const rowMetaStyle: CSSProperties = {
   alignItems: "center",
   gap: "10px",
   fontSize: "11px",
-  color: "var(--dsh-text-secondary, #6b7280)",
+  color: "var(--dsw-alias-label-secondary, #6b7280)",
 };
 
 const idTagStyle: CSSProperties = {
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
   fontSize: "11px",
-  color: "var(--dsh-text-secondary, #6b7280)",
-  background: "var(--dsh-surface-muted, #f3f4f6)",
+  color: "var(--dsw-alias-label-secondary, #6b7280)",
+  background: "var(--dsw-alias-bg-layer-2, #f3f4f6)",
   padding: "1px 4px",
   borderRadius: "3px",
   flexShrink: 0,
 };
 
 const backBtnStyle: CSSProperties = {
-  border: "1px solid var(--dsh-border, #e3e6ea)",
-  background: "var(--dsh-surface, #fff)",
-  color: "var(--dsh-text, #1f2937)",
+  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
+  background: "var(--dsw-alias-bg-layer-1, #fff)",
+  color: "var(--dsw-alias-label-primary, #1f2937)",
   cursor: "pointer",
   padding: "4px 8px",
   fontSize: "12px",
@@ -756,7 +821,7 @@ const backBtnStyle: CSSProperties = {
 
 const openLinkStyle: CSSProperties = {
   fontSize: "12px",
-  color: "var(--dsh-accent, #2f6fed)",
+  color: "var(--dsw-alias-state-business-primary, #2f6fed)",
   textDecoration: "none",
   fontWeight: "500",
 };
@@ -765,7 +830,7 @@ const detailTitleStyle: CSSProperties = {
   fontSize: "14px",
   fontWeight: "700",
   lineHeight: 1.4,
-  color: "var(--dsh-text, #1f2937)",
+  color: "var(--dsw-alias-label-primary, #1f2937)",
   userSelect: "text",
 };
 
@@ -774,9 +839,9 @@ const gridStyle: CSSProperties = {
   gridTemplateColumns: "1fr 1fr",
   gap: "8px",
   padding: "10px",
-  background: "var(--dsh-surface-muted, #f9fafb)",
+  background: "var(--dsw-alias-bg-layer-2, #f9fafb)",
   borderRadius: "6px",
-  border: "1px solid var(--dsh-border, #e3e6ea)",
+  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
 };
 
 const fieldItemStyle: CSSProperties = {
@@ -787,24 +852,24 @@ const fieldItemStyle: CSSProperties = {
 
 const fieldLabelStyle: CSSProperties = {
   fontSize: "11px",
-  color: "var(--dsh-text-secondary, #6b7280)",
+  color: "var(--dsw-alias-label-secondary, #6b7280)",
 };
 
 const fieldValueStyle: CSSProperties = {
   fontSize: "12px",
   fontWeight: "600",
-  color: "var(--dsh-text, #1f2937)",
+  color: "var(--dsw-alias-label-primary, #1f2937)",
   userSelect: "text",
 };
 
 const descBoxStyle: CSSProperties = {
   padding: "10px",
-  background: "var(--dsh-surface, #fff)",
-  border: "1px solid var(--dsh-border, #e3e6ea)",
+  background: "var(--dsw-alias-bg-layer-1, #fff)",
+  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
   borderRadius: "6px",
   fontSize: "12px",
   lineHeight: 1.6,
-  color: "var(--dsh-text, #374151)",
+  color: "var(--dsw-alias-label-primary, #374151)",
   userSelect: "text",
   overflowWrap: "break-word",
   maxHeight: "260px",
@@ -814,9 +879,9 @@ const descBoxStyle: CSSProperties = {
 const emptyDescStyle: CSSProperties = {
   padding: "12px",
   textAlign: "center",
-  color: "var(--dsh-text-secondary, #9ca3af)",
+  color: "var(--dsw-alias-label-secondary, #9ca3af)",
   fontSize: "12px",
-  border: "1px dashed var(--dsh-border, #e3e6ea)",
+  border: "1px dashed var(--dsw-alias-border-l2, #e3e6ea)",
   borderRadius: "6px",
 };
 
@@ -826,13 +891,13 @@ const paginationBarStyle: CSSProperties = {
   justifyContent: "space-between",
   marginTop: "10px",
   paddingTop: "8px",
-  borderTop: "1px solid var(--dsh-border, #e3e6ea)",
+  borderTop: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
 };
 
 const pageBtnStyle = (disabled: boolean): CSSProperties => ({
-  border: "1px solid var(--dsh-border, #e3e6ea)",
-  background: disabled ? "var(--dsh-surface-muted, #f3f4f6)" : "var(--dsh-surface, #fff)",
-  color: disabled ? "var(--dsh-text-secondary, #9ca3af)" : "var(--dsh-text, #1f2937)",
+  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
+  background: disabled ? "var(--dsw-alias-bg-layer-2, #f3f4f6)" : "var(--dsw-alias-bg-layer-1, #fff)",
+  color: disabled ? "var(--dsw-alias-label-secondary, #9ca3af)" : "var(--dsw-alias-label-primary, #1f2937)",
   cursor: disabled ? "not-allowed" : "pointer",
   padding: "3px 10px",
   fontSize: "12px",
@@ -842,5 +907,5 @@ const pageBtnStyle = (disabled: boolean): CSSProperties => ({
 
 const pageInfoStyle: CSSProperties = {
   fontSize: "11px",
-  color: "var(--dsh-text-secondary, #6b7280)",
+  color: "var(--dsw-alias-label-secondary, #6b7280)",
 };
