@@ -590,8 +590,12 @@ export function registerDetailApi(ctx: Context, run: RunFn = runZentao): () => v
       }
       try {
         const module = VIEW_DEFS[view].module;
-        // runZentao 返回 {data, meta} 信封——解包 data（完整对象）
+        // runZentao 返回 {data, meta} 信封——解包 data（完整对象）；缺失时显式报错
         const result = await run([module, "get", String(id)]) as { data?: unknown };
+        if (result.data === undefined) {
+          sendJson(res, 200, { view, id, error: "CLI 返回缺少 data 字段（对象可能不存在或无权限）" });
+          return;
+        }
         sendJson(res, 200, { view, id, data: result.data });
       } catch (error) {
         sendJson(res, 200, { view, id, error: asCliError(error).message });

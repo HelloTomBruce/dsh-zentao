@@ -6,7 +6,7 @@
  * overview.ts 与 workspace.ts。
  */
 import DOMPurify from "dompurify";
-import { createElement, useEffect, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import type { OverviewResponse, PanelTab, TabFilterState } from "./overview.ts";
 import { buildOverviewQuery, CASE_TYPE_MAP, defaultTabFilter, FILTER_OPTIONS, normalizeOverview, openRowCount, PRI_OPTIONS, SEVERITY_OPTIONS, STORY_STAGE_MAP } from "./overview.ts";
@@ -22,18 +22,19 @@ const CONFIG_SAMPLE = '{ "product": 2, "execution": 168 }';
 
 function useOverview(workspacePath: string, view: PanelTab, filterQuery: string, executionParam: string): { data: OverviewResponse | null; refresh: () => void; loading: boolean } {
   const [data, setData] = useState<OverviewResponse | null>(null);
-  const [tick, setTick] = useState(0);
+  const [nonce, setNonce] = useState(0);
   const [loading, setLoading] = useState(false);
+  // fresh=1 仅对「显式 refresh 后的下一次请求」生效——登录/刷新后的常规切 Tab/改筛选仍走服务端缓存
+  const bypassOnceRef = useRef(false);
   useEffect(() => {
     if (workspacePath === "") return;
     let alive = true;
     setLoading(true);
-    // 首次挂载走服务端 60s 缓存（秒开）；显式 refresh（登录后）强制刷新。
     // 按视图懒加载：切 Tab 换 view 即拉对应视图（服务端按 工作区+视图+执行+筛选 缓存）。
     const exec = view === "tasks" && executionParam !== "" ? `&execution=${executionParam}` : "";
-    const url = tick === 0
-      ? `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}${exec}&${filterQuery}`
-      : `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}${exec}&${filterQuery}&fresh=1`;
+    const fresh = bypassOnceRef.current ? "&fresh=1" : "";
+    bypassOnceRef.current = false;
+    const url = `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}${exec}&${filterQuery}${fresh}`;
     fetch(url, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() as Promise<unknown> : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((raw) => { if (alive) setData(normalizeOverview(raw, view)); })
@@ -44,8 +45,8 @@ function useOverview(workspacePath: string, view: PanelTab, filterQuery: string,
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [tick, workspacePath, view, filterQuery, executionParam]);
-  return { data, refresh: () => setTick((t) => t + 1), loading };
+  }, [nonce, workspacePath, view, filterQuery, executionParam]);
+  return { data, refresh: () => { bypassOnceRef.current = true; setNonce((n) => n + 1); }, loading };
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> = {
@@ -229,7 +230,7 @@ function DetailView({
         if (!alive) return;
         if (d.error !== undefined) setLoadError(d.error);
         else if (d.data !== undefined) setDetail(d.data);
-        // unsupported 静默：仅用列表行展示
+        else setLoadError("详情数据缺失（CLI 返回为空）"); // 防加载中永不消失
       })
       .catch((err: unknown) => { if (alive) setLoadError(err instanceof Error ? err.message : "网络错误"); });
     return () => { alive = false; };
@@ -679,7 +680,7 @@ function SkeletonRows({ rows, tab, filterBar = true }: { rows: number; tab: TabK
 }
 
 /** 过滤栏（状态/优先级/严重程度/关键词 + 全部 vs 指派给我）；加载中 counts 缺省时不显示数字。 */
-function FilterBar({ tab, sel, onApply, onlyMine, setOnlyMine, counts, myRealname, disabled }: {
+function FilterBar({ tab, sel, onApply, onlyMine, setOnlyMine, counts, myRealname, disabled, canFilterMine = true }: {
   tab: TabKey;
   sel: TabFilterState;
   onApply: (tab: TabKey, patch: Partial<TabFilterState>) => void;
@@ -688,6 +689,8 @@ function FilterBar({ tab, sel, onApply, onlyMine, setOnlyMine, counts, myRealnam
   counts: { all: number; mine: number } | undefined;
   myRealname: string;
   disabled?: boolean | undefined;
+  /** 当前无登录身份时隐藏「仅指派给我」（避免按他人账号静默过滤）。 */
+  canFilterMine?: boolean | undefined;
 }) {
   return createElement("div", { style: filterBarStyle },
     createElement("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
@@ -731,13 +734,14 @@ function FilterBar({ tab, sel, onApply, onlyMine, setOnlyMine, counts, myRealnam
         style: filterBtnStyle(!onlyMine),
         disabled,
       }, counts !== undefined ? `全部 (${counts.all})` : "全部"),
-      createElement("button", {
+      canFilterMine && createElement("button", {
         onClick: () => { setOnlyMine(true); },
         style: filterBtnStyle(onlyMine),
         disabled,
       }, counts !== undefined ? `仅指派给我 (${counts.mine})` : "仅指派给我"),
     ),
-    myRealname !== "" && createElement("span", { style: userTagStyle }, `账号: ${myRealname}`),
+    myRealname !== "" ? createElement("span", { style: userTagStyle }, `账号: ${myRealname}`)
+      : !canFilterMine && createElement("span", { style: userTagStyle }, "未识别登录身份，无法按指派过滤"),
   );
 }
 
@@ -768,12 +772,33 @@ export function ZentaoPanelBody() {
       setCounts((c) => (c[tab] === data.rows.length ? c : { ...c, [tab]: data.rows.length }));
     }
   }, [data, tab]);
-  // 筛选切换中的列表骨架态：改动筛选即置位，新数据到达（loading 结束）自动清除
+  // 筛选切换中的列表骨架态。防卡死关键：只在「请求键确实会变化」时置位——
+  // 同值重提交（如搜索框原样回车）不会触发新请求，置位将永久无 loading 来清除
   const [switching, setSwitching] = useState(false);
   useEffect(() => { if (!loading) setSwitching(false); }, [loading]);
+  const switchIfChanged = (nextKey: string): void => {
+    const currentKey = `${tab}|${filterQuery}|${selectedExecution}`;
+    if (nextKey !== currentKey) setSwitching(true);
+  };
   const applyFilter = (tab: PanelTab, patch: Partial<TabFilterState>) => {
-    setFilterSel((s) => ({ ...s, [tab]: { ...s[tab], ...patch } }));
-    setSwitching(true);
+    const newSel = { ...filterSel[tab], ...patch };
+    const newQuery = buildOverviewQuery(tab, newSel);
+    switchIfChanged(`${tab}|${tab === tab ? newQuery : filterQuery}|${selectedExecution}`);
+    setFilterSel((s) => ({ ...s, [tab]: newSel }));
+    setSelectedRow(null);
+    setPage(1);
+  };
+  const changeTab = (next: TabKey): void => {
+    if (next === tab) return;
+    switchIfChanged(`${next}|${buildOverviewQuery(next, filterSel[next])}|${selectedExecution}`);
+    setTab(next);
+    setSelectedRow(null);
+    setPage(1);
+  };
+  const changeExecution = (next: string): void => {
+    if (next === selectedExecution) return;
+    switchIfChanged(`${tab}|${filterQuery}|${next}`);
+    setSelectedExecution(next);
     setSelectedRow(null);
     setPage(1);
   };
@@ -803,12 +828,12 @@ export function ZentaoPanelBody() {
             key: t.key,
             role: "tab",
             "aria-selected": tab === t.key,
-            onClick: () => { setTab(t.key); setSelectedRow(null); setPage(1); },
+            onClick: () => { changeTab(t.key); },
             style: tabStyle(tab === t.key),
           }, t.label))),
       createElement(FilterBar, {
         tab, sel: filterSel[tab], onApply: applyFilter,
-        onlyMine, setOnlyMine, counts: undefined, myRealname: "", disabled: true,
+        onlyMine, setOnlyMine, counts: undefined, myRealname: "", disabled: true, canFilterMine: true,
       }),
       createElement(SkeletonRows, { rows: 5, tab, filterBar: false }),
     );
@@ -825,8 +850,9 @@ export function ZentaoPanelBody() {
     );
   }
 
-  const myAccount = viewData.currentUser?.account ?? "zhangyingwu";
-  const myRealname = viewData.currentUser?.realname ?? "张盈武";
+  const myAccount = viewData.currentUser?.account ?? "";
+  const myRealname = viewData.currentUser?.realname ?? "";
+  const canFilterMine = myAccount !== "" || myRealname !== "";
   const isMine = (r: Record<string, unknown>) =>
     (myAccount && (r.assignedTo === myAccount || r.openedBy === myAccount || r.owner === myAccount)) ||
     (myRealname && (r.assignedToRealName === myRealname || r.openedBy === myRealname));
@@ -847,7 +873,7 @@ export function ZentaoPanelBody() {
           key: t.key,
           role: "tab",
           "aria-selected": tab === t.key,
-          onClick: () => { setTab(t.key); setSelectedRow(null); setPage(1); },
+          onClick: () => { changeTab(t.key); },
           style: tabStyle(tab === t.key),
         }, t.label))),
 
@@ -866,10 +892,7 @@ export function ZentaoPanelBody() {
             createElement("select", {
               value: selectedExecution !== "" ? selectedExecution : String(viewData.config?.execution ?? ""),
               onChange: (e: ChangeEvent<HTMLSelectElement>) => {
-                setSelectedExecution(e.target.value);
-                setSelectedRow(null);
-                setPage(1);
-                setSwitching(true);
+                changeExecution(e.target.value);
               },
               style: filterSelectStyle,
               "aria-label": "执行切换",
@@ -879,7 +902,7 @@ export function ZentaoPanelBody() {
           createElement(FilterBar, {
             tab, sel: filterSel[tab], onApply: applyFilter,
             onlyMine, setOnlyMine: (v) => { setOnlyMine(v); setSelectedRow(null); setPage(1); },
-            counts: { all: rawList.length, mine: mineCount }, myRealname,
+            counts: { all: rawList.length, mine: mineCount }, myRealname, canFilterMine,
           }),
           // 筛选切换中：列表区换骨架行（新数据到达自动恢复）
           switching
