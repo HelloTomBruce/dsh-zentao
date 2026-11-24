@@ -37,6 +37,12 @@ export interface OverviewResponse {
     note?: string;
     error?: string;
 }
+/**
+ * 旧格式兼容垫片：0.4.0 之前的服务端返回 {tasks, bugs} 双视图且无 view 字段。
+ * 客户端升级早于宿主重启时（新客户端 + 旧服务端），把旧响应映射为单视图格式，
+ * 保证 tasks/bugs 可用（新视图在旧服务端上显示为空，重启后自动恢复）。
+ */
+export declare function normalizeOverview(raw: unknown, view: PanelTab): OverviewResponse;
 /** 未关闭行数（标题栏未关闭 Bug 徽标用）。 */
 export declare function openRowCount(rows: OverviewRow[]): number;
 /** 一个筛选项：browse → --browse-type（服务端状态集）；filter → --filter（拉取范围内条件过滤）。 */

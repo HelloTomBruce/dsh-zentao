@@ -8,7 +8,7 @@
 import { createElement, useEffect, useState } from "react";
 import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import type { OverviewResponse, PanelTab, TabFilterState } from "./overview.ts";
-import { buildOverviewQuery, CASE_TYPE_MAP, defaultTabFilter, FILTER_OPTIONS, openRowCount, PRI_OPTIONS, SEVERITY_OPTIONS, STORY_STAGE_MAP } from "./overview.ts";
+import { buildOverviewQuery, CASE_TYPE_MAP, defaultTabFilter, FILTER_OPTIONS, normalizeOverview, openRowCount, PRI_OPTIONS, SEVERITY_OPTIONS, STORY_STAGE_MAP } from "./overview.ts";
 import { useActiveWorkspace } from "./workspace.ts";
 import { ZentaoTabIcon } from "./icons.tsx";
 import { T } from "./theme.ts";
@@ -33,8 +33,8 @@ function useOverview(workspacePath: string, view: PanelTab, filterQuery: string,
       ? `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}${exec}&${filterQuery}`
       : `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}${exec}&${filterQuery}&fresh=1`;
     fetch(url, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() as Promise<OverviewResponse> : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((d) => { if (alive) setData(d); })
+      .then((r) => (r.ok ? r.json() as Promise<unknown> : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((raw) => { if (alive) setData(normalizeOverview(raw, view)); })
       .catch((err: unknown) => {
         if (!alive) return;
         const message = err instanceof Error && /^HTTP /.test(err.message) ? err.message : "网络错误";

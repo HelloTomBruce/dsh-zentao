@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildOverviewQuery, DEFAULT_FILTER_KEY, defaultTabFilter, FILTER_OPTIONS, openRowCount, type OverviewRow, type TabFilterState } from "../../src/client/overview.js";
+import { buildOverviewQuery, DEFAULT_FILTER_KEY, defaultTabFilter, FILTER_OPTIONS, normalizeOverview, openRowCount, type OverviewRow, type TabFilterState } from "../../src/client/overview.js";
 import { sanitizeAndFormatHtml } from "../../src/client/panel.js";
 
 const f = (tab: "tasks" | "bugs", patch: Partial<TabFilterState> = {}): TabFilterState => ({ ...defaultTabFilter(tab), ...patch });
@@ -89,5 +89,26 @@ describe("sanitizeAndFormatHtml", () => {
     expect(out).not.toContain("<script");
     expect(out).not.toContain("<iframe");
     expect(out).toContain("正文");
+  });
+});
+
+describe("normalizeOverview（旧格式兼容垫片）", () => {
+  it("新格式（带 view）原样透传", () => {
+    const fresh = { view: "tasks", rows: [{ id: 1, name: "A", status: "wait" }] };
+    expect(normalizeOverview(fresh, "tasks")).toBe(fresh);
+  });
+
+  it("旧格式 {tasks, bugs} 映射为单视图（tasks 取 tasks / bugs 取 bugs）", () => {
+    const legacy = { tasks: [{ id: 1, name: "A", status: "wait" }], bugs: [{ id: 9, title: "B", status: "active" }], config: { product: 2 } };
+    expect(normalizeOverview(legacy, "tasks")).toMatchObject({ view: "tasks", rows: [{ id: 1, name: "A" }] });
+    expect(normalizeOverview(legacy, "bugs")).toMatchObject({ view: "bugs", rows: [{ id: 9, title: "B" }] });
+  });
+
+  it("旧服务端上没有的新视图映射为空行", () => {
+    expect(normalizeOverview({ tasks: [], bugs: [] }, "stories")).toMatchObject({ view: "stories", rows: [] });
+  });
+
+  it("非对象响应返回格式异常错误", () => {
+    expect(normalizeOverview("oops", "tasks")).toMatchObject({ error: "响应格式异常" });
   });
 });

@@ -39,6 +39,30 @@ export interface OverviewResponse {
   error?: string;
 }
 
+/**
+ * 旧格式兼容垫片：0.4.0 之前的服务端返回 {tasks, bugs} 双视图且无 view 字段。
+ * 客户端升级早于宿主重启时（新客户端 + 旧服务端），把旧响应映射为单视图格式，
+ * 保证 tasks/bugs 可用（新视图在旧服务端上显示为空，重启后自动恢复）。
+ */
+export function normalizeOverview(raw: unknown, view: PanelTab): OverviewResponse {
+  if (typeof raw !== "object" || raw === null) {
+    return { view, rows: [], error: "响应格式异常" };
+  }
+  const r = raw as Partial<OverviewResponse> & { tasks?: OverviewRow[]; bugs?: OverviewRow[] };
+  if (r.view !== undefined) return r as OverviewResponse;
+  const legacy = r as { tasks?: OverviewRow[]; bugs?: OverviewRow[]; error?: string; unconfigured?: boolean };
+  return {
+    view,
+    rows: view === "bugs" ? legacy.bugs ?? [] : legacy.tasks ?? [],
+    ...(r.config !== undefined ? { config: r.config } : {}),
+    ...(legacy.unconfigured !== undefined ? { unconfigured: legacy.unconfigured } : {}),
+    ...(r.currentUser !== undefined ? { currentUser: r.currentUser } : {}),
+    ...(r.serverUrl !== undefined ? { serverUrl: r.serverUrl } : {}),
+    ...(r.note !== undefined ? { note: r.note } : {}),
+    ...(legacy.error !== undefined ? { error: legacy.error } : {}),
+  };
+}
+
 /** 未关闭行数（标题栏未关闭 Bug 徽标用）。 */
 export function openRowCount(rows: OverviewRow[]): number {
   return rows.filter((r) => r.status !== "closed").length;
