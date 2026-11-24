@@ -15,6 +15,10 @@ import { bugScopeOf, readWorkspaceConfig, WORKSPACE_CONFIG_FILENAME, type Worksp
 export const OVERVIEW_PATH = "/__dsh-zentao__/overview";
 export const LOGIN_PATH = "/__dsh-zentao__/login";
 export const FILE_PATH = "/__dsh-zentao__/file";
+export const DETAIL_PATH = "/__dsh-zentao__/detail";
+
+/** 不支持 get 子命令的视图（testtask 仅 list/create/update/delete）。 */
+const DETAIL_UNSUPPORTED_VIEWS: readonly OverviewView[] = ["testtasks"];
 
 export interface OverviewRow {
   id: string | number;
@@ -540,6 +544,66 @@ export function registerOverviewApi(ctx: Context, deps: {
     } catch {}
     if (webServer.exact && typeof webServer.exact.delete === "function") {
       webServer.exact.delete(OVERVIEW_PATH);
+    }
+  };
+}
+
+
+/**
+ * GET /__dsh-zentao__/detail?view=<视图>&id=<对象ID>：详情端点。
+ * 转发 `<module> get <id>` 返回完整对象（面板详情页按类型丰富展示）。
+ * testtask 无 get 子命令 → unsupported 标记（面板仅用列表行展示）。
+ */
+export function registerDetailApi(ctx: Context, run: RunFn = runZentao): () => void {
+  const webServer = ctx.webServer as unknown as {
+    register: (route: unknown) => () => void;
+    exact?: Map<string, unknown>;
+  } | undefined;
+  if (webServer === undefined) return () => {};
+
+  if (webServer.exact && typeof webServer.exact.delete === "function") {
+    webServer.exact.delete(DETAIL_PATH);
+  }
+
+  const dispose = webServer.register({
+    kind: "exact",
+    path: DETAIL_PATH,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      if ((req.method ?? "GET") !== "GET") {
+        sendJson(res, 405, { error: "method not allowed" });
+        return;
+      }
+      const view = overviewViewOf(req);
+      if (view === null) {
+        sendJson(res, 400, { error: `非法视图参数（可选：${OVERVIEW_VIEWS.join("/")}）` });
+        return;
+      }
+      const idMatch = /[?&]id=(\d+)/.exec(req.url ?? "");
+      const id = idMatch?.[1] !== undefined ? Number(idMatch[1]) : 0;
+      if (!Number.isInteger(id) || id <= 0) {
+        sendJson(res, 400, { error: "缺少或非法 id 参数（正整数）" });
+        return;
+      }
+      if (DETAIL_UNSUPPORTED_VIEWS.includes(view)) {
+        sendJson(res, 200, { view, id, unsupported: true });
+        return;
+      }
+      try {
+        const module = VIEW_DEFS[view].module;
+        const result = await run([module, "get", String(id)]);
+        sendJson(res, 200, { view, id, data: result });
+      } catch (error) {
+        sendJson(res, 200, { view, id, error: asCliError(error).message });
+      }
+    },
+  });
+
+  return () => {
+    try {
+      dispose?.();
+    } catch {}
+    if (webServer.exact && typeof webServer.exact.delete === "function") {
+      webServer.exact.delete(DETAIL_PATH);
     }
   };
 }

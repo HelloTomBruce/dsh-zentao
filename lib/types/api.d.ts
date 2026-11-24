@@ -11,6 +11,7 @@ import { readWorkspaceConfig, type WorkspaceConfig } from "./lib/workspace-confi
 export declare const OVERVIEW_PATH = "/__dsh-zentao__/overview";
 export declare const LOGIN_PATH = "/__dsh-zentao__/login";
 export declare const FILE_PATH = "/__dsh-zentao__/file";
+export declare const DETAIL_PATH = "/__dsh-zentao__/detail";
 export interface OverviewRow {
     id: string | number;
     /** 标题字段：任务行用 name，bug/需求/用例行用 title（CLI 原样透传，两者都可能出现）。 */
@@ -117,5 +118,11 @@ export declare function registerOverviewApi(ctx: Context, deps?: {
     readConfig?: typeof readWorkspaceConfig;
     run?: RunFn;
 }): () => void;
+/**
+ * GET /__dsh-zentao__/detail?view=<视图>&id=<对象ID>：详情端点。
+ * 转发 `<module> get <id>` 返回完整对象（面板详情页按类型丰富展示）。
+ * testtask 无 get 子命令 → unsupported 标记（面板仅用列表行展示）。
+ */
+export declare function registerDetailApi(ctx: Context, run?: RunFn): () => void;
 export {};
 //# sourceMappingURL=api.d.ts.map

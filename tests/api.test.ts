@@ -9,6 +9,7 @@ import {
   panelFiltersOf,
   overviewViewOf,
   executionOverrideOf,
+  registerDetailApi,
   TASK_PANEL_FIELDS,
   BUG_PANEL_FIELDS,
 } from "../src/api.js";
@@ -475,5 +476,70 @@ describe("executionOverrideOf（多执行切换）", () => {
     expect(executionOverrideOf(req("/x?execution=abc"))).toBeNull();
     expect(executionOverrideOf(req("/x?execution=-1"))).toBeNull();
     expect(executionOverrideOf(req("/x?execution=0"))).toBeNull();
+  });
+});
+
+describe("registerDetailApi", () => {
+  function fakeReq(url: string) {
+    return { method: "GET", url } as never;
+  }
+  function fakeRes() {
+    return {
+      status: 0,
+      body: "",
+      writeHead(s: number, _headers: unknown) { this.status = s; },
+      end(b: string) { this.body = b; },
+    };
+  }
+  function setup(run: (args: string[]) => Promise<unknown>) {
+    const registered: { kind: string; path: string; handler: (req: never, res: never) => Promise<void> }[] = [];
+    const exactMap = new Map<string, unknown>();
+    const ctx = {
+      webServer: {
+        exact: exactMap,
+        register: (r: { kind: string; path: string; handler: (req: never, res: never) => Promise<void> }) => {
+          if (exactMap.has(r.path)) throw new Error(`duplicate ${r.kind} route "${r.path}"`);
+          exactMap.set(r.path, r);
+          registered.push(r);
+          return () => { exactMap.delete(r.path); };
+        },
+      },
+    };
+    registerDetailApi(ctx as never, run);
+    return registered[0];
+  }
+
+  it("转发 <module> get <id> 并返回完整对象", async () => {
+    const run = vi.fn(async () => ({ id: 61, title: "需求A", spec: "<p>描述</p>" }));
+    const res = fakeRes();
+    await setup(run).handler(fakeReq("/__dsh-zentao__/detail?view=stories&id=61") as never, res as never);
+    expect(run).toHaveBeenCalledWith(["story", "get", "61"]);
+    const body = JSON.parse(res.body);
+    expect(body.view).toBe("stories");
+    expect(body.data).toEqual({ id: 61, title: "需求A", spec: "<p>描述</p>" });
+  });
+
+  it("testtask 无 get 子命令返回 unsupported（不调 CLI）", async () => {
+    const run = vi.fn(async () => ({}));
+    const res = fakeRes();
+    await setup(run).handler(fakeReq("/__dsh-zentao__/detail?view=testtasks&id=33") as never, res as never);
+    expect(run).not.toHaveBeenCalled();
+    expect(JSON.parse(res.body)).toEqual({ view: "testtasks", id: 33, unsupported: true });
+  });
+
+  it("非法视图 / 非法 id 返回 400", async () => {
+    const res1 = fakeRes();
+    await setup(async () => ({})).handler(fakeReq("/__dsh-zentao__/detail?view=nope&id=1") as never, res1 as never);
+    expect(res1.status).toBe(400);
+    const res2 = fakeRes();
+    await setup(async () => ({})).handler(fakeReq("/__dsh-zentao__/detail?view=bugs") as never, res2 as never);
+    expect(res2.status).toBe(400);
+  });
+
+  it("CLI 错误透出 error 信息", async () => {
+    const res = fakeRes();
+    await setup(async () => { throw new Error("zentao: 对象不存在"); })
+      .handler(fakeReq("/__dsh-zentao__/detail?view=bugs&id=999999") as never, res as never);
+    expect(JSON.parse(res.body).error).toMatch(/对象不存在/);
   });
 });
