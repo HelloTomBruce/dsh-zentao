@@ -1,23 +1,38 @@
 /**
- * zentao 工具的模块/动作白名单与 CLI 参数构造（适配 zentao-cli ≥ 0.3.1：
- * bug 列表范围三选一、新增 my 地盘模块与 bug confirm 动作）。
- * 所有列表统一 --recPerPage=200 拉全量（--filter 与分页不兼容的 pitfall
- * 规避），程序侧再按需过滤。
+ * zentao 工具的模块/动作白名单与 CLI 参数构造（适配 zentao-cli ≥ 0.5.0：
+ * - 列表/详情必须显式子命令：`bug list` / `bug get <id>`（0.3.x 的默认动作已移除）
+ * - `--recPerPage=200` 已移除，列表统一 `--all` 显式遍历全部页面
+ * - task 列表 scope 为 `--execution-id`（kebab-case）
+ * - 写操作字段经 `--data <json>` 透传（camelCase 字段名原样保留，CLI 按
+ *   schema 校验类型）；scope 字段（product/executionID…）不是请求体字段，
+ *   create 时按模块映射为 `--product-id` / `--execution-id` 等独立 flag
+ * - file create 走 multipart formdata 不支持 JSON，字段转 kebab-case flag
  */
 export type ZentaoModule = "program" | "product" | "project" | "execution" | "story" | "epic" | "requirement" | "bug" | "task" | "testcase" | "testtask" | "productplan" | "build" | "release" | "feedback" | "ticket" | "system" | "user" | "file" | "my";
 export type ZentaoAction = "list" | "get" | "create" | "update" | "delete" | "activate" | "close" | "resolve" | "start" | "finish" | "change" | "confirm" | "todos" | "tasks" | "bugs" | "stories" | "epics" | "requirements" | "testtasks" | "projects" | "feedbacks" | "tickets" | "testcases" | "meetings" | "issues" | "risks";
+/** fields 中可作为 create scope 的键（execution 视作 executionID 的别名）。 */
+type ScopeField = "product" | "project" | "executionID";
 interface ModuleInfo {
     /** 中文名（错误提示用）。 */
     readonly label: string;
     /** 列表时可用的范围参数名集合（空数组 = 无需范围参数）。 */
     readonly scopeFlags: readonly string[];
-    /** scope 可选：提供则过滤，缺省则列表全部（真实 CLI：execution 无 scope 可列表）。 */
+    /** scope 可选：提供则过滤，缺省则列表全部（如 execution 无 scope 可列表）。 */
     readonly scopeOptional?: boolean;
+    /**
+     * create 时 scope 字段 → CLI flag 的映射（0.5.0 起 scope 不是请求体字段，
+     * 混在 --data 里会被拒绝，必须按模块映射为独立 flag，名字各模块异构：
+     * bug/story 是 --product-id，feedback/ticket 是 --product）。
+     */
+    readonly createScope?: Readonly<Partial<Record<ScopeField, string>>>;
     /** 允许的动作集合。 */
     readonly actions: ReadonlySet<ZentaoAction>;
 }
 export declare const MODULE_INFO: Record<ZentaoModule, ModuleInfo>;
 export declare const MODULES: readonly ZentaoModule[];
+/** 字段值：标量或数组（如 bug create 的 openedBuild 须为数组 ["trunk"]，CLI 按 schema 强校验）。 */
+export type FieldValue = string | number | boolean | Array<string | number>;
+export type FieldMap = Record<string, FieldValue>;
 /** 工具入参（运行时 schema 校验后的扁平视图）。 */
 export interface ZentaoArgs {
     module: ZentaoModule;
@@ -26,7 +41,7 @@ export interface ZentaoArgs {
     product?: number;
     project?: number;
     executionID?: number;
-    fields?: Record<string, string | number | boolean>;
+    fields?: FieldMap;
 }
 /**
  * 把工具入参构造成 CLI 参数数组（不含 --format=json，由调用层追加）。

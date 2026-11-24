@@ -18,19 +18,19 @@ export declare const ZENTAO_PARAMETERS: {
     };
     readonly product: {
         readonly type: "number";
-        readonly description: "产品 ID（列表范围参数）。story/bug/testcase 用 --product，epic/requirement/release/feedback/ticket 等用 --productID，插件自动映射。";
+        readonly description: "产品 ID（列表范围参数）。story/bug/testcase/epic/requirement/testtask/productplan/release/feedback/ticket/system 的列表用此参数。";
     };
     readonly project: {
         readonly type: "number";
-        readonly description: "项目 ID（列表范围参数，execution/build 需要）。";
+        readonly description: "项目 ID（列表范围参数，execution/build 需要；bug 列表也可用它作范围）。";
     };
     readonly executionID: {
         readonly type: "number";
-        readonly description: "执行 ID（task 列表的范围参数，注意是 executionID 不是 execution）。";
+        readonly description: "执行 ID（task 列表的范围参数；bug 列表也可用它作范围）。";
     };
     readonly fields: {
         readonly type: "object";
-        readonly description: "字段键值对（create/update/状态动作），如 { title, assignedTo, pri, severity, status }。";
+        readonly description: "字段键值对（create/update/状态动作），camelCase API 字段名，如 { title, assignedTo, pri, severity }；数组字段直接给数组（如 bug 的 openedBuild: [\"trunk\"]）；create 时 scope 字段（product/executionID/project）也放这里，插件自动映射为对应 CLI flag。";
         readonly additionalProperties: true;
     };
 };

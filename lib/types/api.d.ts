@@ -43,9 +43,9 @@ interface Queries {
     bugs: () => Promise<unknown>;
 }
 /**
- * 按工作区配置构造两次 CLI 查询。注入 queries 便于测试：
- * - tasks: `task --executionID=<id> --recPerPage=200`（execution 缺省 → 空数组 + note）
- * - bugs: `bug --product|--project|--execution=<id> --recPerPage=200`
+ * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
+ * - tasks: `task list --execution-id=<id> --all`（execution 缺省 → 空数组 + note）
+ * - bugs: `bug list --product|--project|--execution=<id> --all`
  */
 export declare function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>): Queries;
 /** 聚合两次查询；单边失败时另一边仍返回，并透出首个错误信息。 */

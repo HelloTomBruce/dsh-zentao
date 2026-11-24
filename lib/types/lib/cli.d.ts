@@ -1,6 +1,9 @@
 /**
  * zentao CLI 调用层。所有禅道数据都通过 CLI 子进程获取，凭证由 CLI 内部
- * 管理（~/.config/zentao/zentao.json），本层不读取、不接触任何凭证。
+ * 管理（配置唯一来源是 $DSH_HOME/zentao.json，经 ZENTAO_CONFIG_FILE 指向，
+ * 见 ./config.ts），本层不读取、不接触任何凭证。
+ * 适配 zentao-cli ≥ 0.5.0：JSON 信封 {ok, data|error, meta}，错误码无前缀
+ * （如 "1006"）。
  */
 /** CLI 返回的结构化错误（code 来自 CLI 错误码或 ENOENT）。 */
 export interface CliError extends Error {

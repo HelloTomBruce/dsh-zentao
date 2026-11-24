@@ -9,20 +9,20 @@ import {
 } from "../src/api.js";
 
 describe("createQueries", () => {
-  it("execution → task --executionID；product → bug --product（优先级最高）", async () => {
+  it("execution → task list --execution-id；product → bug list --product（优先级最高）", async () => {
     const run = vi.fn(async (args: string[]) => (args[0] === "task" ? [] : []));
     const queries = createQueries({ product: 2, execution: 168 }, run);
     await Promise.all([queries.tasks(), queries.bugs()]);
-    expect(run).toHaveBeenCalledWith(["task", "--executionID=168", "--recPerPage=200"]);
-    expect(run).toHaveBeenCalledWith(["bug", "--product=2", "--recPerPage=200"]);
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", "--all"]);
   });
 
   it("无 product 时 bug 范围按 project > execution 兜底", async () => {
     const run = vi.fn(async () => []);
     await createQueries({ project: 5, execution: 168 }, run).bugs();
-    expect(run).toHaveBeenCalledWith(["bug", "--project=5", "--recPerPage=200"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--project=5", "--all"]);
     await createQueries({ execution: 168 }, run).bugs();
-    expect(run).toHaveBeenCalledWith(["bug", "--execution=168", "--recPerPage=200"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--execution=168", "--all"]);
   });
 
   it("缺 execution 时任务查询为空（不调 CLI）", async () => {
@@ -185,8 +185,8 @@ describe("registerOverviewApi", () => {
     const res = fakeRes();
     await setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run })
       .handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa"), res);
-    expect(run).toHaveBeenCalledWith(["task", "--executionID=168", "--recPerPage=200"]);
-    expect(run).toHaveBeenCalledWith(["bug", "--product=2", "--recPerPage=200"]);
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", "--all"]);
     const body = JSON.parse(res.body);
     expect(body.tasks).toHaveLength(1);
     expect(body.bugs).toHaveLength(1);

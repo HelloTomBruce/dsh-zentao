@@ -13,26 +13,26 @@ function fakeExec(stdout: string, code = 0) {
 }
 
 describe("runZentao", () => {
-  it("拼接 CLI 参数并追加 --format=json", async () => {
-    const exec = fakeExec('{"status":"success","data":[{"id":1}]}');
-    const result = await runZentao(["bug", "--product=2", "--recPerPage=200"], exec as never);
+  it("拼接 CLI 参数并追加 --format=json（0.5.0 信封 {ok, data, meta}）", async () => {
+    const exec = fakeExec('{"ok":true,"data":[{"id":1}],"meta":{"total":1}}');
+    const result = await runZentao(["bug", "list", "--product=2", "--all"], exec as never);
     expect(exec).toHaveBeenCalledWith(
       "zentao",
-      ["bug", "--product=2", "--recPerPage=200", "--format=json"],
+      ["bug", "list", "--product=2", "--all", "--format=json"],
       expect.any(Function),
     );
     expect(result).toEqual([{ id: 1 }]);
   });
 
   it("透传原始对象当列表无 data 时（详情返回对象）", async () => {
-    const exec = fakeExec('{"status":"success","data":{"id":42,"title":"x"}}');
-    const result = await runZentao(["bug", "42"], exec as never);
+    const exec = fakeExec('{"ok":true,"data":{"id":42,"title":"x"}}');
+    const result = await runZentao(["bug", "get", "42"], exec as never);
     expect(result).toEqual({ id: 42, title: "x" });
   });
 
   it("CLI 错误码映射为 cliError（带 code）", async () => {
-    const exec = fakeExec('{"error":{"code":"2003","message":"缺少必要参数"}}', 1);
-    await expect(runZentao(["task", "--execution=1"], exec as never)).rejects.toMatchObject({
+    const exec = fakeExec('{"ok":false,"error":{"code":"2003","message":"缺少必要参数"}}', 1);
+    await expect(runZentao(["task", "list", "--execution-id=1"], exec as never)).rejects.toMatchObject({
       code: "2003",
       message: expect.stringContaining("缺少必要参数"),
     });
@@ -64,7 +64,7 @@ describe("runZentaoLoose", () => {
   });
 
   it("失败时提取 stderr 合并后的 error JSON", async () => {
-    const exec = fakeExec('{"error":{"code":"1003","message":"当前用户名和密码不正确"}}', 1);
+    const exec = fakeExec('{"ok":false,"error":{"code":"1003","message":"当前用户名和密码不正确"}}', 1);
     await expect(runZentaoLoose(["login"], exec as never)).rejects.toMatchObject({
       code: "1003",
       message: expect.stringContaining("当前用户名和密码不正确"),

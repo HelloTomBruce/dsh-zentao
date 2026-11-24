@@ -49,16 +49,16 @@ interface Queries {
 }
 
 /**
- * 按工作区配置构造两次 CLI 查询。注入 queries 便于测试：
- * - tasks: `task --executionID=<id> --recPerPage=200`（execution 缺省 → 空数组 + note）
- * - bugs: `bug --product|--project|--execution=<id> --recPerPage=200`
+ * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
+ * - tasks: `task list --execution-id=<id> --all`（execution 缺省 → 空数组 + note）
+ * - bugs: `bug list --product|--project|--execution=<id> --all`
  */
 export function createQueries(config: WorkspaceConfig, run: (args: string[]) => Promise<unknown> = runZentao): Queries {
   return {
     tasks: config.execution === undefined
       ? async () => []
       : async () => {
-          const args = ["task", `--executionID=${config.execution}`, "--recPerPage=200"];
+          const args = ["task", "list", `--execution-id=${config.execution}`, "--all"];
           // 集群负载均衡容错：若后端个别节点权限/会话异常回退到了其他 execution，自动重试命中正常节点
           for (let attempt = 0; attempt < 3; attempt++) {
             const res = await run(args);
@@ -76,7 +76,7 @@ export function createQueries(config: WorkspaceConfig, run: (args: string[]) => 
       const scope = bugScopeOf(config);
       return scope === null
         ? async () => []
-        : () => run(["bug", `${scope.flag}=${scope.value}`, "--recPerPage=200"]);
+        : () => run(["bug", "list", `${scope.flag}=${scope.value}`, "--all"]);
     })(),
   };
 }
