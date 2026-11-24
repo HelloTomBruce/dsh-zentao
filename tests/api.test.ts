@@ -6,6 +6,8 @@ import {
   overviewData,
   createQueries,
   buildLoginArgs,
+  TASK_PANEL_FIELDS,
+  BUG_PANEL_FIELDS,
 } from "../src/api.js";
 
 describe("createQueries", () => {
@@ -13,16 +15,16 @@ describe("createQueries", () => {
     const run = vi.fn(async (args: string[]) => (args[0] === "task" ? [] : []));
     const queries = createQueries({ product: 2, execution: 168 }, run);
     await Promise.all([queries.tasks(), queries.bugs()]);
-    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", "--all"]);
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", "--all"]);
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, "--all"]);
   });
 
   it("无 product 时 bug 范围按 project > execution 兜底", async () => {
     const run = vi.fn(async () => []);
     await createQueries({ project: 5, execution: 168 }, run).bugs();
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--project=5", "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--project=5", `--fields=${BUG_PANEL_FIELDS}`, "--all"]);
     await createQueries({ execution: 168 }, run).bugs();
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--execution=168", "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--execution=168", `--fields=${BUG_PANEL_FIELDS}`, "--all"]);
   });
 
   it("缺 execution 时任务查询为空（不调 CLI）", async () => {
@@ -185,8 +187,8 @@ describe("registerOverviewApi", () => {
     const res = fakeRes();
     await setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run })
       .handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa"), res);
-    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", "--all"]);
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", "--all"]);
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, "--all"]);
     const body = JSON.parse(res.body);
     expect(body.tasks).toHaveLength(1);
     expect(body.bugs).toHaveLength(1);

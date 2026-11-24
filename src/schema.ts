@@ -85,6 +85,22 @@ export interface ZentaoArgs {
   project?: number;
   executionID?: number;
   fields?: FieldMap;
+  /** 列表状态过滤（--browse-type，取值随模块，如 task 的 unclosed）。仅 list/地盘动作生效。 */
+  browseType?: string;
+  /** 条件过滤表达式（--filter，拉取范围内，逗号分隔为 AND），如 status=active。仅 list/地盘动作生效。 */
+  filter?: string;
+  /** 关键词搜索（--search，拉取范围内）。仅 list/地盘动作生效。 */
+  search?: string;
+  /** 限定 search 的字段（--search-fields，逗号分隔）。仅 list/地盘动作生效。 */
+  searchFields?: string;
+  /** 排序（--sort），如 id:desc / pri:asc。仅 list/地盘动作生效。 */
+  sort?: string;
+  /** 返回字段裁剪（--fields，逗号分隔）——大列表先裁剪再进上下文，省 token。仅 list/地盘动作生效。 */
+  pick?: string;
+  /** 最多返回条数（--max-items）；缺省 --all 拉全量，给定时结果带 truncated 截断标记。仅 list/地盘动作生效。 */
+  maxItems?: number;
+  /** 富文本字段转 Markdown（--html-to-markdown）。仅 list/地盘动作生效。 */
+  htmlToMarkdown?: boolean;
 }
 
 /** resolve 隐含必填 4 字段（服务端硬性要求，缺一个报 2003）。 */
@@ -126,6 +142,28 @@ function dataArgs(fields: FieldMap | undefined): string[] {
   return ["--data", JSON.stringify(fields)];
 }
 
+/** 列表查询参数（browseType/filter/search/sort/pick/maxItems/htmlToMarkdown）→ CLI flags。filterOverride 用于合并后的过滤表达式（如 execution 的 project scope）。 */
+function queryArgs(args: ZentaoArgs, filterOverride?: string): string[] {
+  const filter = filterOverride ?? args.filter;
+  const out: string[] = [];
+  if (args.browseType !== undefined) out.push(`--browse-type=${args.browseType}`);
+  if (filter !== undefined) out.push(`--filter=${filter}`);
+  if (args.search !== undefined) out.push(`--search=${args.search}`);
+  if (args.searchFields !== undefined) out.push(`--search-fields=${args.searchFields}`);
+  if (args.sort !== undefined) out.push(`--sort=${args.sort}`);
+  if (args.pick !== undefined) out.push(`--fields=${args.pick}`);
+  if (args.maxItems !== undefined) out.push(`--max-items=${args.maxItems}`);
+  if (args.htmlToMarkdown === true) out.push("--html-to-markdown");
+  return out;
+}
+
+/** 是否携带了仅列表可用的查询参数（用于非 list 动作的误用拦截）。 */
+function hasQueryArgs(args: ZentaoArgs): boolean {
+  return args.browseType !== undefined || args.filter !== undefined || args.search !== undefined
+    || args.searchFields !== undefined || args.sort !== undefined || args.pick !== undefined
+    || args.maxItems !== undefined || args.htmlToMarkdown !== undefined;
+}
+
 /**
  * create 参数构造：fields 中的 scope 字段（按模块 createScope 映射表）提为
  * 独立 flag，其余经 --data 透传。模型在 fields 里写 execution 或 executionID
@@ -156,17 +194,25 @@ export function buildCliArgs(args: ZentaoArgs): string[] {
   if (!info.actions.has(action)) {
     throw new Error(`${info.label}(${module}) 不支持动作 ${action}，可选：${[...info.actions].join("/")}`);
   }
+  // 查询参数仅 list/地盘动作生效，防止误写到 get/create 等动作上被静默忽略
+  if (action !== "list" && module !== "my" && hasQueryArgs(args)) {
+    throw new Error(`browseType/filter/search/searchFields/sort/pick/maxItems/htmlToMarkdown 仅在 list 或 my 地盘动作上生效（当前 ${action}）`);
+  }
 
   // 地盘模块：动作即资源名（zentao my tasks），列表式，无需 id 与范围参数。
   if (module === "my") {
-    return [module, action, "--all"];
+    return [module, action, ...queryArgs(args), "--all"];
   }
 
   if (action === "list") {
     const listArgs = [module, "list"];
+    let filter = args.filter;
     if (module === "execution") {
-      // 0.5.0 execution list 无 scope flag；提供 project 时经 --filter 在拉取结果内过滤
-      if (args.project !== undefined) listArgs.push("--filter", `project=${args.project}`);
+      // 0.5.0 execution list 无 scope flag；提供 project 时并入 --filter（与显式 filter 逗号 AND 合并，
+      // 避免两个 --filter 被 CLI 按 OR 处理）在拉取结果内过滤
+      if (args.project !== undefined) {
+        filter = filter === undefined ? `project=${args.project}` : `project=${args.project},${filter}`;
+      }
     } else if (info.scopeFlags.length > 0) {
       const provided = scopeValueOf(args, info.scopeFlags);
       if (provided === undefined && info.scopeOptional !== true) {
@@ -174,7 +220,7 @@ export function buildCliArgs(args: ZentaoArgs): string[] {
       }
       if (provided !== undefined) listArgs.push(`${provided.flag}=${provided.value}`);
     }
-    listArgs.push("--all");
+    listArgs.push(...(filter === args.filter ? queryArgs(args) : queryArgs(args, filter)), "--all");
     return listArgs;
   }
 

@@ -12,11 +12,25 @@ export interface CliError extends Error {
 }
 /** execFile 回调签名（便于测试注入）。 */
 type ExecFn = (cmd: string, args: string[], cb: (error: Error | null, stdout: string) => void) => void;
+/** CLI 列表输出的完整性元数据（0.5.0 信封 meta 字段；详情等非列表输出可能没有）。 */
+export interface CliMeta {
+    returned?: number;
+    fetched?: number;
+    total?: number;
+    hasMore?: boolean;
+    truncated?: boolean;
+    [key: string]: unknown;
+}
+/** runZentao 结果：data 为列表/详情载荷，meta 为完整性元数据（可能缺省）。 */
+export interface CliResult {
+    data: unknown;
+    meta?: CliMeta | undefined;
+}
 /**
  * 执行 zentao CLI。args 不含 --format=json（自动追加）。
- * @returns CLI JSON 输出的 data 字段（列表为数组，详情为对象）。
+ * @returns CLI JSON 输出的 data 与 meta（列表的完整性元数据：total/truncated/hasMore 等）。
  */
-export declare function runZentao(args: string[], exec?: ExecFn): Promise<unknown>;
+export declare function runZentao(args: string[], exec?: ExecFn): Promise<CliResult>;
 /**
  * 执行 zentao CLI 但不强制 JSON 解析（用于 login 等成功时输出纯文本、
  * --format=json 不生效的命令）。进程退出码 0 即成功，返回原始输出；失败时

@@ -43,9 +43,17 @@ interface Queries {
     bugs: () => Promise<unknown>;
 }
 /**
+ * 面板表格实际渲染的列（panel.tsx 卡片/表格共同用到的字段）。
+ * overview 查询用 --fields 裁剪到这些列，降低子进程传输与序列化开销。
+ * 未知字段会被 CLI 静默丢弃（实测），故裁剪是安全的。导出供测试共享单一事实源。
+ */
+export declare const TASK_PANEL_FIELDS = "id,name,status,pri,deadline,assignedTo,assignedToRealName,openedBy,execution";
+export declare const BUG_PANEL_FIELDS = "id,title,status,pri,severity,deadline,assignedTo,assignedToRealName,openedBy";
+/**
  * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
- * - tasks: `task list --execution-id=<id> --all`（execution 缺省 → 空数组 + note）
- * - bugs: `bug list --product|--project|--execution=<id> --all`
+ * - tasks: `task list --execution-id=<id> --fields=<面板列> --all`（execution 缺省 → 空数组 + note）
+ * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> --all`
+ * 默认 run 解包 runZentao 的 {data, meta}，只取 data（面板暂不需要完整性元数据）。
  */
 export declare function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>): Queries;
 /** 聚合两次查询；单边失败时另一边仍返回，并透出首个错误信息。 */

@@ -14,20 +14,21 @@ function fakeExec(stdout: string, code = 0) {
 
 describe("runZentao", () => {
   it("拼接 CLI 参数并追加 --format=json（0.5.0 信封 {ok, data, meta}）", async () => {
-    const exec = fakeExec('{"ok":true,"data":[{"id":1}],"meta":{"total":1}}');
+    const exec = fakeExec('{"ok":true,"data":[{"id":1}],"meta":{"total":1,"truncated":false}}');
     const result = await runZentao(["bug", "list", "--product=2", "--all"], exec as never);
     expect(exec).toHaveBeenCalledWith(
       "zentao",
       ["bug", "list", "--product=2", "--all", "--format=json"],
       expect.any(Function),
     );
-    expect(result).toEqual([{ id: 1 }]);
+    expect(result).toEqual({ data: [{ id: 1 }], meta: { total: 1, truncated: false } });
   });
 
-  it("透传原始对象当列表无 data 时（详情返回对象）", async () => {
+  it("详情返回对象；无 meta 时结果缺省 meta 字段", async () => {
     const exec = fakeExec('{"ok":true,"data":{"id":42,"title":"x"}}');
     const result = await runZentao(["bug", "get", "42"], exec as never);
-    expect(result).toEqual({ id: 42, title: "x" });
+    expect(result).toEqual({ data: { id: 42, title: "x" } });
+    expect(result.meta).toBeUndefined();
   });
 
   it("CLI 错误码映射为 cliError（带 code）", async () => {

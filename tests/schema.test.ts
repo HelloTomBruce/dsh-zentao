@@ -108,7 +108,7 @@ describe("buildCliArgs（zentao-cli 0.5.0 命令面）", () => {
   it("execution list 无 scope flag；提供 project 时经 --filter 过滤", () => {
     expect(buildCliArgs({ module: "execution", action: "list" })).toEqual(["execution", "list", "--all"]);
     expect(buildCliArgs({ module: "execution", action: "list", project: 60 }))
-      .toEqual(["execution", "list", "--filter", "project=60", "--all"]);
+      .toEqual(["execution", "list", "--filter=project=60", "--all"]);
   });
 
   it("task start 缺 realStarted 时报错（必填）", () => {
@@ -156,5 +156,36 @@ describe("buildCliArgs — 模块范围细节", () => {
   it("状态动作带字段时经 --data（如 story close 的 closedReason）", () => {
     expect(buildCliArgs({ module: "story", action: "close", id: 100, fields: { closedReason: "done" } }))
       .toEqual(["story", "close", "100", "--data", '{"closedReason":"done"}']);
+  });
+});
+
+describe("buildCliArgs — 查询参数（browseType/filter/search/sort/pick/maxItems/htmlToMarkdown）", () => {
+  it("list 携带全部查询参数", () => {
+    const args = buildCliArgs({
+      module: "bug", action: "list", product: 2,
+      browseType: "unclosed", filter: "status=active", search: "登录", searchFields: "title,steps",
+      sort: "id:desc", pick: "id,title,status", maxItems: 50, htmlToMarkdown: true,
+    });
+    expect(args).toEqual([
+      "bug", "list", "--product=2",
+      "--browse-type=unclosed", "--filter=status=active", "--search=登录", "--search-fields=title,steps",
+      "--sort=id:desc", "--fields=id,title,status", "--max-items=50", "--html-to-markdown",
+      "--all",
+    ]);
+  });
+
+  it("my 地盘动作同样支持查询参数", () => {
+    expect(buildCliArgs({ module: "my", action: "tasks", browseType: "doing", pick: "id,name" }))
+      .toEqual(["my", "tasks", "--browse-type=doing", "--fields=id,name", "--all"]);
+  });
+
+  it("查询参数在非 list/my 动作上报错（防止被静默忽略）", () => {
+    expect(() => buildCliArgs({ module: "bug", action: "get", id: 1, pick: "id" })).toThrow(/仅在 list 或 my/);
+    expect(() => buildCliArgs({ module: "bug", action: "create", fields: { title: "t" }, maxItems: 5 } as never)).toThrow(/仅在 list 或 my/);
+  });
+
+  it("execution 的项目范围与显式 filter 合并为一个 --filter（避免 OR 语义）", () => {
+    expect(buildCliArgs({ module: "execution", action: "list", project: 60, filter: "status=doing" }))
+      .toEqual(["execution", "list", "--filter=project=60,status=doing", "--all"]);
   });
 });

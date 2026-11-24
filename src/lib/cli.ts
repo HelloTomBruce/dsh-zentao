@@ -101,8 +101,24 @@ const defaultExec: ExecFn = (cmd, args, cb) => {
   });
 };
 
+/** CLI 列表输出的完整性元数据（0.5.0 信封 meta 字段；详情等非列表输出可能没有）。 */
+export interface CliMeta {
+  returned?: number;
+  fetched?: number;
+  total?: number;
+  hasMore?: boolean;
+  truncated?: boolean;
+  [key: string]: unknown;
+}
+
+/** runZentao 结果：data 为列表/详情载荷，meta 为完整性元数据（可能缺省）。 */
+export interface CliResult {
+  data: unknown;
+  meta?: CliMeta | undefined;
+}
+
 /** 解析 CLI JSON 输出；错误统一映射为 CliError。 */
-function parseOutput(stdout: string, cliFailed: boolean): unknown {
+function parseOutput(stdout: string, cliFailed: boolean): CliResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
@@ -115,7 +131,7 @@ function parseOutput(stdout: string, cliFailed: boolean): unknown {
       stdout,
     );
   }
-  const obj = parsed as { status?: unknown; error?: { code?: unknown; message?: unknown }; data?: unknown };
+  const obj = parsed as { status?: unknown; error?: { code?: unknown; message?: unknown }; data?: unknown; meta?: CliMeta };
   if (obj?.error !== undefined) {
     const code = String(obj.error.code ?? "E5001");
     const message = String(obj.error.message ?? "zentao 请求失败");
@@ -124,14 +140,14 @@ function parseOutput(stdout: string, cliFailed: boolean): unknown {
   if (cliFailed) {
     throw cliErrorOf("E5001", `zentao CLI 退出码非 0：${stdout.slice(0, 200)}`, stdout);
   }
-  return obj?.data;
+  return { data: obj?.data, ...(obj?.meta !== undefined ? { meta: obj.meta } : {}) };
 }
 
 /**
  * 执行 zentao CLI。args 不含 --format=json（自动追加）。
- * @returns CLI JSON 输出的 data 字段（列表为数组，详情为对象）。
+ * @returns CLI JSON 输出的 data 与 meta（列表的完整性元数据：total/truncated/hasMore 等）。
  */
-export async function runZentao(args: string[], exec: ExecFn = defaultExec): Promise<unknown> {
+export async function runZentao(args: string[], exec: ExecFn = defaultExec): Promise<CliResult> {
   const fullArgs = [...args, "--format=json"];
   return new Promise((resolve, reject) => {
     exec("zentao", fullArgs, (error, stdout) => {

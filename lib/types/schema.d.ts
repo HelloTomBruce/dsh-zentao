@@ -42,6 +42,22 @@ export interface ZentaoArgs {
     project?: number;
     executionID?: number;
     fields?: FieldMap;
+    /** 列表状态过滤（--browse-type，取值随模块，如 task 的 unclosed）。仅 list/地盘动作生效。 */
+    browseType?: string;
+    /** 条件过滤表达式（--filter，拉取范围内，逗号分隔为 AND），如 status=active。仅 list/地盘动作生效。 */
+    filter?: string;
+    /** 关键词搜索（--search，拉取范围内）。仅 list/地盘动作生效。 */
+    search?: string;
+    /** 限定 search 的字段（--search-fields，逗号分隔）。仅 list/地盘动作生效。 */
+    searchFields?: string;
+    /** 排序（--sort），如 id:desc / pri:asc。仅 list/地盘动作生效。 */
+    sort?: string;
+    /** 返回字段裁剪（--fields，逗号分隔）——大列表先裁剪再进上下文，省 token。仅 list/地盘动作生效。 */
+    pick?: string;
+    /** 最多返回条数（--max-items）；缺省 --all 拉全量，给定时结果带 truncated 截断标记。仅 list/地盘动作生效。 */
+    maxItems?: number;
+    /** 富文本字段转 Markdown（--html-to-markdown）。仅 list/地盘动作生效。 */
+    htmlToMarkdown?: boolean;
 }
 /**
  * 把工具入参构造成 CLI 参数数组（不含 --format=json，由调用层追加）。

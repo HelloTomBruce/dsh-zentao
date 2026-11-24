@@ -49,19 +49,29 @@ interface Queries {
 }
 
 /**
- * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
- * - tasks: `task list --execution-id=<id> --all`（execution 缺省 → 空数组 + note）
- * - bugs: `bug list --product|--project|--execution=<id> --all`
+ * 面板表格实际渲染的列（panel.tsx 卡片/表格共同用到的字段）。
+ * overview 查询用 --fields 裁剪到这些列，降低子进程传输与序列化开销。
+ * 未知字段会被 CLI 静默丢弃（实测），故裁剪是安全的。导出供测试共享单一事实源。
  */
-export function createQueries(config: WorkspaceConfig, run: (args: string[]) => Promise<unknown> = runZentao): Queries {
+export const TASK_PANEL_FIELDS = "id,name,status,pri,deadline,assignedTo,assignedToRealName,openedBy,execution";
+export const BUG_PANEL_FIELDS = "id,title,status,pri,severity,deadline,assignedTo,assignedToRealName,openedBy";
+
+/**
+ * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
+ * - tasks: `task list --execution-id=<id> --fields=<面板列> --all`（execution 缺省 → 空数组 + note）
+ * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> --all`
+ * 默认 run 解包 runZentao 的 {data, meta}，只取 data（面板暂不需要完整性元数据）。
+ */
+export function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>): Queries {
+  const runData = run ?? (async (args: string[]) => (await runZentao(args)).data);
   return {
     tasks: config.execution === undefined
       ? async () => []
       : async () => {
-          const args = ["task", "list", `--execution-id=${config.execution}`, "--all"];
+          const args = ["task", "list", `--execution-id=${config.execution}`, `--fields=${TASK_PANEL_FIELDS}`, "--all"];
           // 集群负载均衡容错：若后端个别节点权限/会话异常回退到了其他 execution，自动重试命中正常节点
           for (let attempt = 0; attempt < 3; attempt++) {
-            const res = await run(args);
+            const res = await runData(args);
             if (Array.isArray(res) && res.length > 0) {
               const first = res[0] as { execution?: string | number };
               if (first.execution !== undefined && String(first.execution) !== String(config.execution)) {
@@ -70,13 +80,13 @@ export function createQueries(config: WorkspaceConfig, run: (args: string[]) => 
             }
             return res;
           }
-          return run(args);
+          return runData(args);
         },
     bugs: (() => {
       const scope = bugScopeOf(config);
       return scope === null
         ? async () => []
-        : () => run(["bug", "list", `${scope.flag}=${scope.value}`, "--all"]);
+        : () => runData(["bug", "list", `${scope.flag}=${scope.value}`, `--fields=${BUG_PANEL_FIELDS}`, "--all"]);
     })(),
   };
 }

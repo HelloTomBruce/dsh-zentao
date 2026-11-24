@@ -39,19 +39,30 @@ zentao 模块=task 动作=list executionID=168           # 执行 #168 的任务
 zentao 模块=my 动作=tasks                            # 指派给我的任务
 zentao 模块=my 动作=bugs                             # 指派给我的 Bug
 zentao 模块=bug 动作=get id=3395                     # Bug 详情
-zentao 模块=bug 动作=create fields={title:..., severity:2, assignedTo:admin}
+zentao 模块=bug 动作=create fields={product:2, title:..., severity:2, openedBuild:["trunk"]}
 zentao 模块=bug 动作=resolve id=3395 fields={resolution:fixed, assignedTo:admin, resolvedBuild:trunk, comment:已修复}
-zentao 模块=task 动作=start id=15317
+zentao 模块=task 动作=start id=15317 fields={realStarted:2026-11-24}
 ```
 
-范围参数：story/testcase → `product`；**bug → `product` / `project` / `executionID` 三选一**；epic/requirement/testtask/productplan/release/feedback/ticket/system → `productID`（模型侧仍传 `product`，插件自动映射）；execution/build → `project`；**task → `executionID`**（注意不是 execution）；`my` 模块无需范围参数。
+列表查询参数（list 与 my 地盘动作生效）：
+
+```text
+pick="id,title,status,assignedTo"    # 字段裁剪——大列表先裁剪，显著省 token
+browseType=unclosed                  # 状态过滤（取值随模块）
+filter="status=active,pri=1"         # 条件过滤，逗号分隔为 AND
+search="登录"                        # 关键词搜索（searchFields 可限定字段）
+sort="id:desc"                       # 排序
+maxItems=50                          # 条数上限；结果带 truncated/total 标记截断与全集大小
+htmlToMarkdown=true                  # 富文本字段（desc/steps）转 Markdown
+```
+
+范围参数：story/testcase/epic/requirement/testtask/productplan/release/feedback/ticket/system → `product`；**bug → `product` / `project` / `executionID` 三选一**；execution/build → `project`；**task → `executionID`**；`my` 模块无需范围参数。
 
 ## 已知局限
 
-- 列表统一 `--recPerPage=200` 拉全量（`--filter` 与分页不兼容的 pitfall），大列表在模型侧按 status/assignedTo 过滤
 - `bug resolve` 必须提供 resolution + assignedTo + resolvedBuild + comment（服务端硬性要求）
 - 面板任务/Bug 视图依赖工作区 `.dsh-zentao.json` 绑定；`my` 地盘模块需要禅道服务端 ≥ 22.5
-- **会话内请用 zentao 工具而非直接运行 `zentao` CLI**：CLI 凭证（`$DSH_HOME/zentao.json`）在 dsh 会话的 Bash 沙箱中不可达，直接跑会报 E1005；插件工具走 node 宿主进程，不受沙箱影响
+- **会话内请用 zentao 工具而非直接运行 `zentao` CLI**：CLI 凭证（`$DSH_HOME/zentao.json`）在 dsh 会话的 Bash 沙箱中不可达，直接跑会报 1006；插件工具走 node 宿主进程，不受沙箱影响
 
 ## 技术说明
 
