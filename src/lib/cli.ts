@@ -97,7 +97,8 @@ const defaultExec: ExecFn = (cmd, args, cb) => {
   const [runCmd, runArgs]: [string, string[]] = bundledBin
     ? [process.execPath, preload ? ["--require", preload, bundledBin, ...args] : [bundledBin, ...args]]
     : [cmd, args];
-  execFile(runCmd, runArgs, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024, env }, (error, stdout, stderr) => {
+  // 60s：--all 全页拉取大产品列表（200 条/页 ≈ 0.45s/页）+ 集群慢节点重试的现实上限
+  execFile(runCmd, runArgs, { timeout: 60_000, maxBuffer: 8 * 1024 * 1024, env }, (error, stdout, stderr) => {
     // 部分命令（如 login）把错误 JSON 写到 stderr：stdout 为空时回退 stderr。
     const out = String(stdout).trim() !== "" ? String(stdout) : String(stderr);
     cb(error, out);

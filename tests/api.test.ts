@@ -375,13 +375,20 @@ describe("buildLoginArgs", () => {
 });
 
 describe("registerLoginApi", () => {
-  function fakeReq(method: string, body: unknown) {
-    const req = new EventEmitter() as EventEmitter & { method: string };
+  function fakeReq(method: string, body: unknown, opts: { origin?: string; contentType?: string | null } = {}) {
+    const req = new EventEmitter() as EventEmitter & { method: string; headers: Record<string, string> };
     req.method = method;
-    process.nextTick(() => {
-      req.emit("data", Buffer.from(typeof body === "string" ? body : JSON.stringify(body)));
-      req.emit("end");
-    });
+    req.headers = {
+      host: "127.0.0.1:3080",
+      "content-type": "contentType" in opts ? (opts.contentType ?? "") : "application/json",
+      ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+    };
+    if (body !== undefined) {
+      process.nextTick(() => {
+        req.emit("data", Buffer.from(typeof body === "string" ? body : JSON.stringify(body)));
+        req.emit("end");
+      });
+    }
     return req;
   }
 
@@ -452,6 +459,24 @@ describe("registerLoginApi", () => {
     const res = fakeRes();
     await route.handler(fakeReq("POST", { server: "http://z", account: "admin", password: "bad" }) as never, res as never);
     expect(JSON.parse(res.body)).toEqual({ ok: false, error: "zentao: 当前用户名和密码不正确" });
+  });
+
+  it("非本机 Origin 拒绝（403，不调用 CLI）", async () => {
+    const run = vi.fn(async () => {});
+    const route = setup(run);
+    const res = fakeRes();
+    await route.handler(fakeReq("POST", { server: "http://z", account: "a", password: "p" }, { origin: "https://evil.example" }) as never, res as never);
+    expect(res.status).toBe(403);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("content-type 非 JSON 返回 415（防 text/plain 简单请求跨源）", async () => {
+    const run = vi.fn(async () => {});
+    const route = setup(run);
+    const res = fakeRes();
+    await route.handler(fakeReq("POST", '{"server":"http://z"}', { contentType: "text/plain" }) as never, res as never);
+    expect(res.status).toBe(415);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("缺少必要字段返回 400，不调用 CLI", async () => {
@@ -567,5 +592,15 @@ describe("fetchWithNodeRetry — 耗尽语义", () => {
     const bugs = await createViewQuery({ product: 2 }, "bugs", {}, run)!();
     expect(calls).toBe(3);
     expect(bugs).toHaveLength(1);
+  });
+});
+
+describe("executionOverrideOf — 严格数字", () => {
+  const req = (url: string) => ({ url }) as never;
+
+  it("拒绝 1e3 / 0x10 等宽松数字形态", () => {
+    expect(executionOverrideOf(req("/x?execution=1e3"))).toBeNull();
+    expect(executionOverrideOf(req("/x?execution=0x10"))).toBeNull();
+    expect(executionOverrideOf(req("/x?execution=66"))).toBe(66);
   });
 });

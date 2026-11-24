@@ -209,6 +209,26 @@ export async function overviewViewData(
   }
 }
 
+/**
+ * 本机来源校验：Origin/Host 必须为本机回环地址。作用：
+ * - 恶意网页发的跨源 fetch/XHR 会带 Origin: https://evil → 拒绝（CSRF 面）
+ * - <img>/<form> 等无 Origin 的跨源请求由浏览器 PNA（私网访问限制）逐步拦截，
+ *   本校验是其之外的服务端防线
+ */
+function isLocalRequest(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  if (origin !== undefined && origin !== "null") {
+    try {
+      const u = new URL(origin);
+      if (!["127.0.0.1", "localhost", "[::1]", "::1"].includes(u.hostname)) return false;
+    } catch {
+      return false;
+    }
+  }
+  const host = (req.headers.host ?? "").split(":")[0] ?? "";
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
@@ -269,6 +289,16 @@ export function registerLoginApi(ctx: Context, run: RunFn = runZentaoLoose): () 
         sendJson(res, 405, { error: "method not allowed" });
         return;
       }
+      // 登录会覆盖本地凭证——只接受本机来源的 JSON 请求（防恶意网页 text/plain
+      // 简单请求跨源送达 JSON body 覆盖登录态/指向攻击者服务器）
+      if (!isLocalRequest(req)) {
+        sendJson(res, 403, { error: "拒绝非本机来源的登录请求" });
+        return;
+      }
+      if (!/application\/json/i.test(req.headers["content-type"] ?? "")) {
+        sendJson(res, 415, { error: "content-type 必须为 application/json" });
+        return;
+      }
       let body: LoginBody;
       try {
         body = JSON.parse(await readBody(req)) as LoginBody;
@@ -313,6 +343,9 @@ function detectContentType(buf: Buffer): string {
  * 图片流代理端点。使用当前已登录凭证向禅道拉取文件二进制并直吐浏览器，
  * 解决浏览器同源保护、CORS 与鉴权导致 Bug 详情中图片无法展示的问题。
  */
+/** 附件代理单文件大小上限（超限拒绝而非整块进内存）。 */
+const MAX_FILE_PROXY_BYTES = 50 * 1024 * 1024;
+
 export function registerFileApi(ctx: Context): () => void {
   const webServer = ctx.webServer as unknown as {
     register: (route: unknown) => () => void;
@@ -328,6 +361,11 @@ export function registerFileApi(ctx: Context): () => void {
     kind: "exact",
     path: FILE_PATH,
     handler: async (req: IncomingMessage, res: ServerResponse) => {
+      // 附件经当前登录凭证拉取——拒绝非本机来源（防恶意页面借本机代理枚举附件）
+      if (!isLocalRequest(req)) {
+        sendJson(res, 403, { error: "拒绝非本机来源的附件请求" });
+        return;
+      }
       const url = req.url ?? "";
       const match = /[?&]id=(\d+)/.exec(url);
       if (!match || !match[1]) {
@@ -348,16 +386,27 @@ export function registerFileApi(ctx: Context): () => void {
             Token: profile.token,
             Cookie: "tab=project; app=project",
           },
+          signal: AbortSignal.timeout(30_000), // 上游超时，防挂死连接占住面板
         });
         if (!upstream.ok) {
           sendJson(res, upstream.status, { error: `下载失败: HTTP ${upstream.status}` });
           return;
         }
+        const declared = Number(upstream.headers.get("content-length") ?? 0);
+        if (declared > MAX_FILE_PROXY_BYTES) {
+          sendJson(res, 413, { error: `附件过大（${(declared / 1024 / 1024).toFixed(1)}MB > 50MB 上限）` });
+          return;
+        }
         const buf = Buffer.from(await upstream.arrayBuffer());
+        if (buf.byteLength > MAX_FILE_PROXY_BYTES) {
+          sendJson(res, 413, { error: "附件超过 50MB 上限" });
+          return;
+        }
         const contentType = detectContentType(buf);
         res.writeHead(200, {
           "content-type": contentType,
-          "cache-control": "public, max-age=86400",
+          // private：附件可能含敏感内容，不应被共享缓存/中间代理存储
+          "cache-control": "private, max-age=86400",
           "content-length": String(buf.length),
         });
         res.end(buf);
@@ -379,6 +428,8 @@ export function registerFileApi(ctx: Context): () => void {
 
 /** overview 结果缓存 TTL：面板重复打开直接命中，避免重复 CLI 调用。 */
 const OVERVIEW_CACHE_TTL = 60_000;
+/** 缓存容量上限（工作区×视图×执行×筛选 组合无界增长防溢出）：超限淘汰最旧条目。 */
+const OVERVIEW_CACHE_MAX = 200;
 
 /** 从请求 URL 解析 workspace 查询参数（URL 解码；decode 失败返回 undefined）。 */
 function workspaceOf(req: IncomingMessage): string | undefined {
@@ -415,7 +466,8 @@ export function panelFiltersOf(req: IncomingMessage): PanelFilters | null {
     if (name === "search") {
       const trimmed = value.trim();
       if (trimmed === "") continue;
-      if (trimmed.length > 120 || trimmed.startsWith("-") || /[-~\x00-\x1f]/.test(trimmed)) return null;
+      // 只拦「以 - 开头」（会被 CLI 当 flag）；关键词内含连字符（如 5G-A）是合法需求
+      if (trimmed.length > 120 || trimmed.startsWith("-") || /[\x00-\x1f]/.test(trimmed)) return null;
       out[name] = trimmed;
     } else {
       if (!FILTER_PARAM_RE.test(value)) return null;
@@ -432,8 +484,10 @@ export function panelFiltersOf(req: IncomingMessage): PanelFilters | null {
 export function executionOverrideOf(req: IncomingMessage): number | undefined | null {
   const match = /[?&]execution=([^&]*)/.exec(req.url ?? "");
   if (match === null || match[1] === undefined || match[1] === "") return undefined;
+  // ^\d+$ 拒绝 "1e3"/"0x10" 等被 Number() 宽松接受的形态
+  if (!/^\d+$/.test(match[1])) return null;
   const num = Number(match[1]);
-  return Number.isInteger(num) && num > 0 ? num : null;
+  return num > 0 ? num : null;
 }
 
 /** 解析视图参数：缺省 tasks；不在白名单返回 null（调用方 400）。 */
@@ -510,7 +564,7 @@ export function registerOverviewApi(ctx: Context, deps: {
       }
       const filters = panelFiltersOf(req);
       if (filters === null) {
-        sendJson(res, 400, { error: "非法筛选参数（browse/filter 仅允许字母数字与 = , _ - !；search 不得以 - 开头）" });
+        sendJson(res, 400, { error: "非法筛选参数（browse/filter 仅允许字母数字与 = , _ - !；search 不得以 - 开头、不得含控制符、≤120 字符）" });
         return;
       }
       const executionOverride = executionOverrideOf(req);
@@ -533,6 +587,11 @@ export function registerOverviewApi(ctx: Context, deps: {
           pending = compute(workspace, view, executionOverride, filters)
             .then((data) => {
               cache.set(key, { at: Date.now(), data });
+              // 简单 FIFO 淘汰：Map 保持插入序，超限删最旧（命中不重排，对 60s TTL 足够）
+              if (cache.size > OVERVIEW_CACHE_MAX) {
+                const oldest = cache.keys().next().value;
+                if (oldest !== undefined) cache.delete(oldest);
+              }
               return data;
             })
             .finally(() => {
@@ -574,6 +633,8 @@ export function registerDetailApi(ctx: Context, run: RunFn = runZentao): () => v
     webServer.exact.delete(DETAIL_PATH);
   }
 
+  // 同 view+id 的并发请求去重（双击行/快速点击不重复起 CLI 子进程）
+  const inflight = new Map<string, Promise<void>>();
   const dispose = webServer.register({
     kind: "exact",
     path: DETAIL_PATH,
@@ -597,18 +658,30 @@ export function registerDetailApi(ctx: Context, run: RunFn = runZentao): () => v
         sendJson(res, 200, { view, id, unsupported: true });
         return;
       }
-      try {
-        const module = VIEW_DEFS[view].module;
-        // runZentao 返回 {data, meta} 信封——解包 data（完整对象）；缺失时显式报错
-        const result = await run([module, "get", String(id)]) as { data?: unknown };
-        if (result.data === undefined) {
-          sendJson(res, 200, { view, id, error: "CLI 返回缺少 data 字段（对象可能不存在或无权限）" });
-          return;
-        }
-        sendJson(res, 200, { view, id, data: result.data });
-      } catch (error) {
-        sendJson(res, 200, { view, id, error: asCliError(error).message });
+      const key = `${view}|${id}`;
+      const pending = inflight.get(key);
+      if (pending !== undefined) {
+        // 复用同键进行中的请求结束后重发本响应（简并：直接提示重试，避免复杂化）
+        sendJson(res, 409, { view, id, error: "相同详情正在加载中" });
+        return;
       }
+      const task = (async () => {
+        try {
+          const module = VIEW_DEFS[view].module;
+          // runZentao 返回 {data, meta} 信封——解包 data（完整对象）；缺失时显式报错
+          const result = await run([module, "get", String(id)]) as { data?: unknown };
+          if (result.data === undefined) {
+            sendJson(res, 200, { view, id, error: "CLI 返回缺少 data 字段（对象可能不存在或无权限）" });
+            return;
+          }
+          sendJson(res, 200, { view, id, data: result.data });
+        } catch (error) {
+          sendJson(res, 200, { view, id, error: asCliError(error).message });
+        } finally {
+          inflight.delete(key);
+        }
+      })();
+      inflight.set(key, task);
     },
   });
 
