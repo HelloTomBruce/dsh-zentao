@@ -9,9 +9,13 @@ import {
   panelFiltersOf,
   overviewViewOf,
   executionOverrideOf,
+  scopeOverridesOf,
+  effectiveConfigOf,
   registerDetailApi,
+  registerMetaApi,
   TASK_PANEL_FIELDS,
   BUG_PANEL_FIELDS,
+  STORY_PANEL_FIELDS,
 } from "../src/api.js";
 
 describe("createViewQuery（按视图构造单条 CLI 查询）", () => {
@@ -300,7 +304,67 @@ describe("registerOverviewApi", () => {
     const res = fakeRes();
     await setup().handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa&execution=abc"), res);
     expect(res.status).toBe(400);
-    expect(JSON.parse(res.body).error).toMatch(/execution/);
+    expect(JSON.parse(res.body).error).toMatch(/scope/);
+  });
+
+  it("非法 product / project 参数返回 400", async () => {
+    const res1 = fakeRes();
+    await setup().handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa&product=abc"), res1);
+    expect(res1.status).toBe(400);
+    const res2 = fakeRes();
+    await setup().handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa&project=1e3"), res2);
+    expect(res2.status).toBe(400);
+  });
+
+  it("无绑定 + 显式 scope：绕过 unconfigured 直接查询，响应带 effective", async () => {
+    const run = vi.fn(async () => [{ id: 61, title: "S1", status: "active" }]);
+    const route = setup({ readConfig: async () => ({ ok: true, config: null }), run });
+    const res = fakeRes();
+    await route.handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa&view=stories&product=2"), res);
+    expect(run).toHaveBeenCalledWith(["story", "list", "--product=2", `--fields=${STORY_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
+    const body = JSON.parse(res.body);
+    expect(body.unconfigured).toBeUndefined();
+    expect(body.rows).toHaveLength(1);
+    expect(body.config).toBeUndefined(); // 无文件绑定
+    expect(body.effective).toEqual({ product: 2 });
+  });
+
+  it("无绑定且无显式 scope 仍返回 unconfigured", async () => {
+    const run = vi.fn(async () => []);
+    const route = setup({ readConfig: async () => ({ ok: true, config: null }), run });
+    const res = fakeRes();
+    await route.handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa"), res);
+    expect(JSON.parse(res.body).unconfigured).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("显式 execution 覆盖在 bugs 视图清除绑定 product（手动选择优先）", async () => {
+    const run = vi.fn(async () => []);
+    const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 65 } }), run });
+    const res = fakeRes();
+    await route.handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa&view=bugs&execution=168"), res);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--execution=168", `--fields=${BUG_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
+    const body = JSON.parse(res.body);
+    expect(body.config).toEqual({ product: 2, execution: 65 }); // 绑定原样返回
+    expect(body.effective).toEqual({ execution: 168 });
+  });
+
+  it("显式 scope 参与缓存键：同视图不同 product 独立缓存", async () => {
+    const run = vi.fn(async () => []);
+    const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2 } }), run });
+    const hit = async (suffix: string) => {
+      const res = fakeRes();
+      await route.handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa&view=stories${suffix}`), res);
+      return res;
+    };
+    await hit("");              // 绑定 product=2 查询 1 次
+    await hit("");              // 命中缓存
+    expect(run).toHaveBeenCalledTimes(1);
+    await hit("&product=7");    // 显式 product=7 → 新缓存键
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenLastCalledWith(["story", "list", "--product=7", `--fields=${STORY_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
+    await hit("&product=7");    // 命中缓存
+    expect(run).toHaveBeenCalledTimes(2);
   });
 
   it("筛选参数透传到 CLI 查询（filter 经 URL 编码）", async () => {
@@ -504,6 +568,52 @@ describe("executionOverrideOf（多执行切换）", () => {
   });
 });
 
+describe("scopeOverridesOf（面板范围选择器）", () => {
+  const req = (url: string) => ({ url }) as never;
+
+  it("全部缺省返回 undefined（无覆盖语义）", () => {
+    expect(scopeOverridesOf(req("/x?workspace=/ws/a"))).toBeUndefined();
+  });
+
+  it("解析 product/project/execution 单个与组合", () => {
+    expect(scopeOverridesOf(req("/x?product=2"))).toEqual({ product: 2 });
+    expect(scopeOverridesOf(req("/x?project=5&execution=168"))).toEqual({ project: 5, execution: 168 });
+    expect(scopeOverridesOf(req("/x?product=2&project=5&execution=168"))).toEqual({ product: 2, project: 5, execution: 168 });
+  });
+
+  it("任一参数非法返回 null（含宽松数字形态）", () => {
+    expect(scopeOverridesOf(req("/x?product=abc"))).toBeNull();
+    expect(scopeOverridesOf(req("/x?product=2&project=0"))).toBeNull();
+    expect(scopeOverridesOf(req("/x?execution=1e3"))).toBeNull();
+    expect(scopeOverridesOf(req("/x?product=-3"))).toBeNull();
+    expect(scopeOverridesOf(req("/x?project=0x10"))).toBeNull();
+  });
+});
+
+describe("effectiveConfigOf（绑定 + 显式覆盖合并）", () => {
+  it("无覆盖 → 原绑定（含 null → 空对象）", () => {
+    expect(effectiveConfigOf({ product: 2 }, undefined)).toEqual({ product: 2 });
+    expect(effectiveConfigOf(null, undefined)).toEqual({});
+  });
+
+  it("显式 product 覆盖，未给维度回落绑定", () => {
+    expect(effectiveConfigOf({ product: 2, execution: 65 }, { product: 3 }))
+      .toEqual({ product: 3, execution: 65 });
+  });
+
+  it("显式项目/执行而未选产品 → 清除绑定 product（防 Bug 视图 product 优先级盖掉手动选择）", () => {
+    expect(effectiveConfigOf({ product: 2, execution: 65 }, { execution: 66 }))
+      .toEqual({ execution: 66 });
+    expect(effectiveConfigOf({ product: 2 }, { project: 5 }))
+      .toEqual({ project: 5 });
+  });
+
+  it("config null + 纯显式覆盖 → 手动选择即全部配置（未配置工作区也可查询）", () => {
+    expect(effectiveConfigOf(null, { execution: 168 })).toEqual({ execution: 168 });
+    expect(effectiveConfigOf(null, { product: 2 })).toEqual({ product: 2 });
+  });
+});
+
 describe("registerDetailApi", () => {
   function fakeReq(url: string) {
     return { method: "GET", url } as never;
@@ -602,5 +712,95 @@ describe("executionOverrideOf — 严格数字", () => {
     expect(executionOverrideOf(req("/x?execution=1e3"))).toBeNull();
     expect(executionOverrideOf(req("/x?execution=0x10"))).toBeNull();
     expect(executionOverrideOf(req("/x?execution=66"))).toBe(66);
+  });
+});
+
+describe("registerMetaApi（范围选择器下拉数据源）", () => {
+  function fakeReq(url: string, headers: Record<string, string> = { host: "127.0.0.1:3080" }) {
+    return { method: "GET", url, headers } as never;
+  }
+  function fakeRes() {
+    return {
+      status: 0,
+      body: "",
+      writeHead(s: number, _headers: unknown) { this.status = s; },
+      end(b: string) { this.body = b; },
+    };
+  }
+  function setup(run: (args: string[]) => Promise<unknown>) {
+    const registered: { kind: string; path: string; handler: (req: never, res: never) => Promise<void> }[] = [];
+    const exactMap = new Map<string, unknown>();
+    const ctx = {
+      webServer: {
+        exact: exactMap,
+        register: (r: { kind: string; path: string; handler: (req: never, res: never) => Promise<void> }) => {
+          if (exactMap.has(r.path)) throw new Error(`duplicate ${r.kind} route "${r.path}"`);
+          exactMap.set(r.path, r);
+          registered.push(r);
+          return () => { exactMap.delete(r.path); };
+        },
+      },
+    };
+    registerMetaApi(ctx as never, run);
+    return registered[0];
+  }
+
+  it("注册 /__dsh-zentao__/meta/scopes 精确路由，仅接受 GET", async () => {
+    const route = setup(async () => ({ data: [] }));
+    expect(route.kind).toBe("exact");
+    expect(route.path).toBe("/__dsh-zentao__/meta/scopes");
+    const res = fakeRes();
+    await route.handler({ method: "POST", url: "/__dsh-zentao__/meta/scopes", headers: { host: "127.0.0.1" } } as never, res as never);
+    expect(res.status).toBe(405);
+  });
+
+  it("拒绝非本机来源（跨源 Origin / 非回环 Host）", async () => {
+    const route = setup(async () => ({ data: [] }));
+    const res1 = fakeRes();
+    await route.handler(fakeReq("/__dsh-zentao__/meta/scopes", { host: "127.0.0.1:3080", origin: "https://evil.example" }), res1 as never);
+    expect(res1.status).toBe(403);
+    const res2 = fakeRes();
+    await route.handler(fakeReq("/__dsh-zentao__/meta/scopes", { host: "192.168.1.5:3080" }), res2 as never);
+    expect(res2.status).toBe(403);
+  });
+
+  it("并行拉取产品/项目/执行并裁剪到选择器列", async () => {
+    const run = vi.fn(async (args: string[]) => ({ data: [{ id: 1, name: `${args[0]}-1` }] }));
+    const route = setup(run);
+    const res = fakeRes();
+    await route.handler(fakeReq("/__dsh-zentao__/meta/scopes"), res as never);
+    expect(run).toHaveBeenCalledWith(["product", "list", "--fields=id,name,status", "--all"]);
+    expect(run).toHaveBeenCalledWith(["project", "list", "--fields=id,name,status", "--all"]);
+    expect(run).toHaveBeenCalledWith(["execution", "list", "--fields=id,name,project,status", "--all"]);
+    const body = JSON.parse(res.body);
+    expect(body.products).toEqual([{ id: 1, name: "product-1" }]);
+    expect(body.projects).toEqual([{ id: 1, name: "project-1" }]);
+    expect(body.executions).toEqual([{ id: 1, name: "execution-1" }]);
+    expect(body.errors).toBeUndefined();
+  });
+
+  it("单项失败降级：该项缺省 + errors 透出，其他项正常", async () => {
+    const run = vi.fn(async (args: string[]) => {
+      if (args[0] === "execution") throw new Error("zentao: 1006 未登录");
+      return { data: [{ id: 1, name: `${args[0]}-1` }] };
+    });
+    const route = setup(run);
+    const res = fakeRes();
+    await route.handler(fakeReq("/__dsh-zentao__/meta/scopes"), res as never);
+    const body = JSON.parse(res.body);
+    expect(body.products).toHaveLength(1);
+    expect(body.projects).toHaveLength(1);
+    expect(body.executions).toBeUndefined();
+    expect(body.errors.executions).toMatch(/1006/);
+  });
+
+  it("60s 内命中缓存；fresh=1 强制重拉", async () => {
+    const run = vi.fn(async () => ({ data: [] }));
+    const route = setup(run);
+    await route.handler(fakeReq("/__dsh-zentao__/meta/scopes"), fakeRes() as never);
+    await route.handler(fakeReq("/__dsh-zentao__/meta/scopes"), fakeRes() as never);
+    expect(run).toHaveBeenCalledTimes(3); // 首拉 3 个模块
+    await route.handler(fakeReq("/__dsh-zentao__/meta/scopes?fresh=1"), fakeRes() as never);
+    expect(run).toHaveBeenCalledTimes(6);
   });
 });

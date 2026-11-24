@@ -17,6 +17,7 @@ export const OVERVIEW_PATH = "/__dsh-zentao__/overview";
 export const LOGIN_PATH = "/__dsh-zentao__/login";
 export const FILE_PATH = "/__dsh-zentao__/file";
 export const DETAIL_PATH = "/__dsh-zentao__/detail";
+export const META_SCOPES_PATH = "/__dsh-zentao__/meta/scopes";
 
 /** 不支持 get 子命令的视图（testtask 仅 list/create/update/delete）。 */
 const DETAIL_UNSUPPORTED_VIEWS: readonly OverviewView[] = ["testtasks"];
@@ -44,13 +45,15 @@ export interface OverviewViewData {
   rows: OverviewRow[];
   /** 生效的工作区配置摘要（客户端展示绑定信息；未配置时缺省）。 */
   config?: WorkspaceConfig | undefined;
-  /** 未配置工作区绑定（客户端显示引导态）。 */
+  /** 显式 scope 覆盖生效后的完整配置（仅请求带 product/project/execution 参数时返回；面板回显手动选择）。 */
+  effective?: WorkspaceConfig | undefined;
+  /** 未配置工作区绑定且未显式选择范围（客户端显示引导/选择器态）。 */
   unconfigured?: boolean | undefined;
   /** 当前登录账号信息（客户端用于【只看指派给我】本地过滤）。 */
   currentUser?: { account: string; realname?: string | undefined } | undefined;
   /** 禅道服务器地址（客户端用于生成 Web 查看直链）。 */
   serverUrl?: string | undefined;
-  /** 提示信息（如"配置缺 execution，任务视图为空"）。 */
+  /** 提示信息（如"未选择执行，任务视图为空"）。 */
   note?: string | undefined;
   error?: string | undefined;
 }
@@ -434,17 +437,65 @@ export function panelFiltersOf(req: IncomingMessage): PanelFilters | null {
   return out as PanelFilters;
 }
 
-/**
- * 解析 execution 覆盖参数（仅 tasks 视图使用；面板多执行切换下拉）。
- * 缺省 undefined；非法（非正整数）返回 null（调用方 400）。
- */
-export function executionOverrideOf(req: IncomingMessage): number | undefined | null {
-  const match = /[?&]execution=([^&]*)/.exec(req.url ?? "");
+/** 显式 scope 覆盖（面板手动选择的范围；优先级高于工作区文件绑定）。 */
+export interface ScopeOverrides {
+  product?: number;
+  project?: number;
+  execution?: number;
+}
+
+/** 解析单个正整数 scope 参数：缺省 undefined；非法（非正整数）返回 null。 */
+function scopeParamOf(url: string, name: string): number | undefined | null {
+  const match = new RegExp(`[?&]${name}=([^&]*)`).exec(url);
   if (match === null || match[1] === undefined || match[1] === "") return undefined;
   // ^\d+$ 拒绝 "1e3"/"0x10" 等被 Number() 宽松接受的形态
   if (!/^\d+$/.test(match[1])) return null;
   const num = Number(match[1]);
   return num > 0 ? num : null;
+}
+
+/**
+ * 解析显式 scope 覆盖参数（product / project / execution，面板范围选择器）。
+ * 三者全部缺省返回 undefined（无语义覆盖）；任一非法返回 null（调用方 400）。
+ */
+export function scopeOverridesOf(req: IncomingMessage): ScopeOverrides | undefined | null {
+  const url = req.url ?? "";
+  const product = scopeParamOf(url, "product");
+  const project = scopeParamOf(url, "project");
+  const execution = scopeParamOf(url, "execution");
+  if (product === null || project === null || execution === null) return null;
+  if (product === undefined && project === undefined && execution === undefined) return undefined;
+  return {
+    ...(product !== undefined ? { product } : {}),
+    ...(project !== undefined ? { project } : {}),
+    ...(execution !== undefined ? { execution } : {}),
+  };
+}
+
+/**
+ * 合并文件绑定与显式覆盖，得到生效配置：
+ * - 显式给的维度以显式值为准，未给的维度回落到文件绑定
+ * - 例外：显式选择了项目/执行而未选产品时，清除绑定中的 product——
+ *   Bug 视图 scope 优先级 product > project > execution，不清除会让
+ *   用户在面板手动选的项目/执行被绑定的 product 静默盖掉
+ */
+export function effectiveConfigOf(config: WorkspaceConfig | null, overrides: ScopeOverrides | undefined): WorkspaceConfig {
+  const base = config ?? {};
+  if (overrides === undefined) return base;
+  const merged: WorkspaceConfig = { ...base, ...overrides };
+  if (overrides.product === undefined && (overrides.project !== undefined || overrides.execution !== undefined)) {
+    delete merged.product;
+  }
+  return merged;
+}
+
+/**
+ * 解析 execution 覆盖参数（仅 tasks 视图使用；面板多执行切换下拉）。
+ * 缺省 undefined；非法（非正整数）返回 null（调用方 400）。
+ */
+export function executionOverrideOf(req: IncomingMessage): number | undefined | null {
+  const overrides = scopeOverridesOf(req);
+  return overrides === null ? null : overrides?.execution;
 }
 
 /** 解析视图参数：缺省 tasks；不在白名单返回 null（调用方 400）。 */
@@ -455,10 +506,11 @@ export function overviewViewOf(req: IncomingMessage): OverviewView | null {
   return isViewKey(value) ? (value as OverviewView) : null;
 }
 
-/** 缓存键：工作区 + 视图 + execution 覆盖 + 筛选参数（相互独立缓存）。 */
-function cacheKeyOf(workspace: string, view: OverviewView, executionOverride: number | undefined, filters: PanelFilters): string {
+/** 缓存键：工作区 + 视图 + 显式 scope 覆盖 + 筛选参数（相互独立缓存）。 */
+function cacheKeyOf(workspace: string, view: OverviewView, overrides: ScopeOverrides | undefined, filters: PanelFilters): string {
   return [
-    workspace, view, executionOverride ?? "",
+    workspace, view,
+    overrides?.product ?? "", overrides?.project ?? "", overrides?.execution ?? "",
     filters.browse ?? "", filters.filter ?? "", filters.search ?? "",
   ].join("|");
 }
@@ -486,20 +538,23 @@ export function registerOverviewApi(ctx: Context, deps: {
   const readConfig = deps.readConfig ?? readWorkspaceConfig;
   const cache = new Map<string, { at: number; data: OverviewViewData }>();
   const inflight = new Map<string, Promise<OverviewViewData>>();
-  const compute = async (workspace: string, view: OverviewView, executionOverride: number | undefined, filters: PanelFilters): Promise<OverviewViewData> => {
+  const compute = async (workspace: string, view: OverviewView, overrides: ScopeOverrides | undefined, filters: PanelFilters): Promise<OverviewViewData> => {
     const result = await readConfig(workspace);
     if (!result.ok) {
       return { view, rows: [], error: `${WORKSPACE_CONFIG_FILENAME}：${result.error}` };
     }
-    if (result.config === null) {
+    // 未配置绑定且未手动选择范围 → 引导/选择器态；有显式 scope 时无绑定也可查询
+    if (result.config === null && overrides === undefined) {
       return { view, rows: [], unconfigured: true };
     }
-    // tasks 视图的 execution 覆盖（面板多执行切换）：仅影响本次查询，响应 config 保持绑定原值
-    const effective = executionOverride !== undefined && view === "tasks"
-      ? { ...result.config, execution: executionOverride }
-      : result.config;
+    // 显式 scope 覆盖（面板范围选择器/多执行切换）：仅影响本次查询，响应 config 保持绑定原值
+    const effective = effectiveConfigOf(result.config, overrides);
     const data = await overviewViewData(effective, view, createViewQuery(effective, view, filters, deps.run));
-    return { ...data, config: result.config };
+    return {
+      ...data,
+      config: result.config ?? undefined,
+      ...(overrides !== undefined ? { effective } : {}),
+    };
   };
   const dispose = webServer.register({
     kind: "exact",
@@ -524,14 +579,14 @@ export function registerOverviewApi(ctx: Context, deps: {
         sendJson(res, 400, { error: "非法筛选参数（browse/filter 仅允许字母数字与 = , _ - !；search 不得以 - 开头、不得含控制符、≤120 字符）" });
         return;
       }
-      const executionOverride = executionOverrideOf(req);
-      if (executionOverride === null) {
-        sendJson(res, 400, { error: "非法 execution 参数（须为正整数）" });
+      const overrides = scopeOverridesOf(req);
+      if (overrides === null) {
+        sendJson(res, 400, { error: "非法 scope 参数（product/project/execution 须为正整数）" });
         return;
       }
       try {
         const fresh = (req.url ?? "").includes("fresh=1");
-        const key = cacheKeyOf(workspace, view, executionOverride, filters);
+        const key = cacheKeyOf(workspace, view, overrides, filters);
         if (!fresh) {
           const hit = cache.get(key);
           if (hit !== undefined && Date.now() - hit.at < OVERVIEW_CACHE_TTL) {
@@ -541,7 +596,7 @@ export function registerOverviewApi(ctx: Context, deps: {
         }
         let pending = inflight.get(key);
         if (pending === undefined) {
-          pending = compute(workspace, view, executionOverride, filters)
+          pending = compute(workspace, view, overrides, filters)
             .then((data) => {
               cache.set(key, { at: Date.now(), data });
               // 简单 FIFO 淘汰：Map 保持插入序，超限删最旧（命中不重排，对 60s TTL 足够）
@@ -573,6 +628,121 @@ export function registerOverviewApi(ctx: Context, deps: {
   };
 }
 
+
+/**
+ * GET /__dsh-zentao__/meta/scopes：面板范围选择器的下拉数据源。
+ * 并行拉取产品 / 项目 / 执行三个全量列表（--fields 裁剪到选择器所需列）；
+ * 执行列表带 project 字段，前端按项目级联分组。单项失败不影响其他项
+ * （老服务端缺模块时降级），错误经 errors 字段透出。60s 缓存 + fresh=1 绕过。
+ */
+export interface ScopeOption {
+  id: number | string;
+  name?: string;
+  status?: string;
+  /** 执行所属项目（级联分组用；仅 executions 项）。 */
+  project?: number | string;
+}
+
+export interface MetaScopesData {
+  products?: ScopeOption[] | undefined;
+  projects?: ScopeOption[] | undefined;
+  executions?: ScopeOption[] | undefined;
+  /** 单项拉取失败的错误信息（对应列表缺省）。 */
+  errors?: { products?: string; projects?: string; executions?: string } | undefined;
+}
+
+/** 选择器列裁剪：id+name 必需，status 供前端隐藏已关闭项，executions 另带 project 级联键。 */
+const META_PRODUCT_FIELDS = "id,name,status";
+const META_PROJECT_FIELDS = "id,name,status";
+const META_EXECUTION_FIELDS = "id,name,project,status";
+
+export function registerMetaApi(ctx: Context, run: RunFn = runZentao): () => void {
+  const webServer = ctx.webServer as unknown as {
+    register: (route: unknown) => () => void;
+    exact?: Map<string, unknown>;
+  } | undefined;
+  if (webServer === undefined) return () => {};
+
+  if (webServer.exact && typeof webServer.exact.delete === "function") {
+    webServer.exact.delete(META_SCOPES_PATH);
+  }
+
+  const runData = async (args: string[]) => (await run(args) as { data?: unknown }).data;
+  // 单键全量缓存（无参数维度）；TTL 与 overview 对齐
+  let cached: { at: number; data: MetaScopesData } | null = null;
+  let inflight: Promise<MetaScopesData> | null = null;
+
+  const pull = async (args: string[]): Promise<{ rows?: ScopeOption[]; error?: string }> => {
+    try {
+      const data = await runData(args);
+      return { rows: Array.isArray(data) ? (data as ScopeOption[]) : [] };
+    } catch (error) {
+      return { error: asCliError(error).message };
+    }
+  };
+  const compute = async (): Promise<MetaScopesData> => {
+    const [products, projects, executions] = await Promise.all([
+      pull(["product", "list", `--fields=${META_PRODUCT_FIELDS}`, "--all"]),
+      pull(["project", "list", `--fields=${META_PROJECT_FIELDS}`, "--all"]),
+      pull(["execution", "list", `--fields=${META_EXECUTION_FIELDS}`, "--all"]),
+    ]);
+    const errors: NonNullable<MetaScopesData["errors"]> = {};
+    if (products.error !== undefined) errors.products = products.error;
+    if (projects.error !== undefined) errors.projects = projects.error;
+    if (executions.error !== undefined) errors.executions = executions.error;
+    return {
+      ...(products.rows !== undefined ? { products: products.rows } : {}),
+      ...(projects.rows !== undefined ? { projects: projects.rows } : {}),
+      ...(executions.rows !== undefined ? { executions: executions.rows } : {}),
+      ...(Object.keys(errors).length > 0 ? { errors } : {}),
+    };
+  };
+
+  const dispose = webServer.register({
+    kind: "exact",
+    path: META_SCOPES_PATH,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      if ((req.method ?? "GET") !== "GET") {
+        sendJson(res, 405, { error: "method not allowed" });
+        return;
+      }
+      // 下拉数据即禅道全量产品/项目清单——只服务本机来源（对齐 login/file 端点）
+      if (!isLocalRequest(req)) {
+        sendJson(res, 403, { error: "拒绝非本机来源的 meta 请求" });
+        return;
+      }
+      try {
+        const fresh = (req.url ?? "").includes("fresh=1");
+        if (!fresh && cached !== null && Date.now() - cached.at < OVERVIEW_CACHE_TTL) {
+          sendJson(res, 200, cached.data);
+          return;
+        }
+        if (inflight === null) {
+          inflight = compute()
+            .then((data) => {
+              cached = { at: Date.now(), data };
+              return data;
+            })
+            .finally(() => {
+              inflight = null;
+            });
+        }
+        sendJson(res, 200, await inflight);
+      } catch (error) {
+        sendJson(res, 200, { errors: { products: asCliError(error).message } });
+      }
+    },
+  });
+
+  return () => {
+    try {
+      dispose?.();
+    } catch {}
+    if (webServer.exact && typeof webServer.exact.delete === "function") {
+      webServer.exact.delete(META_SCOPES_PATH);
+    }
+  };
+}
 
 /**
  * GET /__dsh-zentao__/detail?view=<视图>&id=<对象ID>：详情端点。
