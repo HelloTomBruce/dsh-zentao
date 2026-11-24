@@ -104,3 +104,32 @@ describe("readWorkspaceConfig", () => {
     }
   });
 });
+
+describe("executions 数组绑定（多执行切换）", () => {
+  it("解析数组并取首项为默认 execution", async () => {
+    const { config } = parseWorkspaceConfig('{"product":26,"executions":[65,66,67]}');
+    expect(config).toEqual({ product: 26, execution: 65, executions: [65, 66, 67] });
+  });
+
+  it("向下兼容：单 execution 写法不受影响", async () => {
+    const { config } = parseWorkspaceConfig('{"execution":168}');
+    expect(config).toEqual({ execution: 168 });
+  });
+
+  it("数组去重且显式 execution 优先于首项", async () => {
+    const { config } = parseWorkspaceConfig('{"executions":[66,65,66],"execution":65}');
+    expect(config).toEqual({ execution: 65, executions: [66, 65] });
+  });
+
+  it("数组项非法（0/负数/非数字）报错", async () => {
+    expect(parseWorkspaceConfig('{"executions":[65,0]}').error).toMatch(/executions/);
+    expect(parseWorkspaceConfig('{"executions":[-1]}').error).toMatch(/executions/);
+    expect(parseWorkspaceConfig('{"executions":["abc"]}').error).toMatch(/executions/);
+    expect(parseWorkspaceConfig('{"executions":"65"}').error).toMatch(/executions/);
+  });
+
+  it("空数组忽略（不产生 executions 字段）", async () => {
+    const { config } = parseWorkspaceConfig('{"product":26,"executions":[]}');
+    expect(config).toEqual({ product: 26 });
+  });
+});

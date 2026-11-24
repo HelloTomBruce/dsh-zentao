@@ -412,6 +412,17 @@ export function panelFiltersOf(req: IncomingMessage): PanelFilters | null {
   return out as PanelFilters;
 }
 
+/**
+ * 解析 execution 覆盖参数（仅 tasks 视图使用；面板多执行切换下拉）。
+ * 缺省 undefined；非法（非正整数）返回 null（调用方 400）。
+ */
+export function executionOverrideOf(req: IncomingMessage): number | undefined | null {
+  const match = /[?&]execution=([^&]*)/.exec(req.url ?? "");
+  if (match === null || match[1] === undefined || match[1] === "") return undefined;
+  const num = Number(match[1]);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
 /** 解析视图参数：缺省 tasks；不在白名单返回 null（调用方 400）。 */
 export function overviewViewOf(req: IncomingMessage): OverviewView | null {
   const match = /[?&]view=([^&]*)/.exec(req.url ?? "");
@@ -420,10 +431,10 @@ export function overviewViewOf(req: IncomingMessage): OverviewView | null {
   return (OVERVIEW_VIEWS as readonly string[]).includes(value) ? (value as OverviewView) : null;
 }
 
-/** 缓存键：工作区 + 视图 + 筛选参数（不同视图/筛选条件独立缓存）。 */
-function cacheKeyOf(workspace: string, view: OverviewView, filters: PanelFilters): string {
+/** 缓存键：工作区 + 视图 + execution 覆盖 + 筛选参数（相互独立缓存）。 */
+function cacheKeyOf(workspace: string, view: OverviewView, executionOverride: number | undefined, filters: PanelFilters): string {
   return [
-    workspace, view,
+    workspace, view, executionOverride ?? "",
     filters.browse ?? "", filters.filter ?? "", filters.search ?? "",
   ].join("|");
 }
@@ -451,7 +462,7 @@ export function registerOverviewApi(ctx: Context, deps: {
   const readConfig = deps.readConfig ?? readWorkspaceConfig;
   const cache = new Map<string, { at: number; data: OverviewViewData }>();
   const inflight = new Map<string, Promise<OverviewViewData>>();
-  const compute = async (workspace: string, view: OverviewView, filters: PanelFilters): Promise<OverviewViewData> => {
+  const compute = async (workspace: string, view: OverviewView, executionOverride: number | undefined, filters: PanelFilters): Promise<OverviewViewData> => {
     const result = await readConfig(workspace);
     if (!result.ok) {
       return { view, rows: [], error: `${WORKSPACE_CONFIG_FILENAME}：${result.error}` };
@@ -459,7 +470,12 @@ export function registerOverviewApi(ctx: Context, deps: {
     if (result.config === null) {
       return { view, rows: [], unconfigured: true };
     }
-    return overviewViewData(result.config, view, createViewQuery(result.config, view, filters, deps.run));
+    // tasks 视图的 execution 覆盖（面板多执行切换）：仅影响本次查询，响应 config 保持绑定原值
+    const effective = executionOverride !== undefined && view === "tasks"
+      ? { ...result.config, execution: executionOverride }
+      : result.config;
+    const data = await overviewViewData(effective, view, createViewQuery(effective, view, filters, deps.run));
+    return { ...data, config: result.config };
   };
   const dispose = webServer.register({
     kind: "exact",
@@ -484,9 +500,14 @@ export function registerOverviewApi(ctx: Context, deps: {
         sendJson(res, 400, { error: "非法筛选参数（browse/filter 仅允许字母数字与 = , _ - !；search 不得以 - 开头）" });
         return;
       }
+      const executionOverride = executionOverrideOf(req);
+      if (executionOverride === null) {
+        sendJson(res, 400, { error: "非法 execution 参数（须为正整数）" });
+        return;
+      }
       try {
         const fresh = (req.url ?? "").includes("fresh=1");
-        const key = cacheKeyOf(workspace, view, filters);
+        const key = cacheKeyOf(workspace, view, executionOverride, filters);
         if (!fresh) {
           const hit = cache.get(key);
           if (hit !== undefined && Date.now() - hit.at < OVERVIEW_CACHE_TTL) {
@@ -496,7 +517,7 @@ export function registerOverviewApi(ctx: Context, deps: {
         }
         let pending = inflight.get(key);
         if (pending === undefined) {
-          pending = compute(workspace, view, filters)
+          pending = compute(workspace, view, executionOverride, filters)
             .then((data) => {
               cache.set(key, { at: Date.now(), data });
               return data;

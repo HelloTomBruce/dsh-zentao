@@ -12,8 +12,10 @@ export interface WorkspaceConfig {
     product?: number;
     /** 项目 ID（Bug 视图备选范围）。 */
     project?: number;
-    /** 执行 ID（任务视图必需；Bug 视图末选范围）。 */
+    /** 执行 ID（任务视图必需；Bug 视图末选范围；多执行绑定时为默认选中项）。 */
     execution?: number;
+    /** 可选执行列表（executions 数组绑定；任务视图提供切换下拉）。含 execution 本身。 */
+    executions?: number[];
 }
 export type ReadResult = {
     ok: true;

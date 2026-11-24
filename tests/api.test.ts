@@ -8,6 +8,7 @@ import {
   buildLoginArgs,
   panelFiltersOf,
   overviewViewOf,
+  executionOverrideOf,
   TASK_PANEL_FIELDS,
   BUG_PANEL_FIELDS,
 } from "../src/api.js";
@@ -272,6 +273,35 @@ describe("registerOverviewApi", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
+  it("execution 覆盖：tasks 查询换 execution-id 且独立缓存；绑定原样返回", async () => {
+    const run = vi.fn(async () => []);
+    const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 65, executions: [65, 66] } }), run });
+    const hit = async (suffix: string) => {
+      const res = fakeRes();
+      await route.handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa${suffix}`), res);
+      return res;
+    };
+    await hit(""); // 默认 execution=65
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=65", `--fields=${TASK_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
+    expect(run).toHaveBeenCalledTimes(1);
+    await hit(""); // 命中缓存
+    expect(run).toHaveBeenCalledTimes(1);
+    await hit("&execution=66"); // 切换执行 → 新缓存键
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=66", `--fields=${TASK_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
+    expect(run).toHaveBeenCalledTimes(2);
+    const res3 = fakeRes();
+    await route.handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa&execution=66"), res3);
+    expect(run).toHaveBeenCalledTimes(2); // 同 execution 命中缓存
+    expect(JSON.parse(res3.body).config).toEqual({ product: 2, execution: 65, executions: [65, 66] }); // 绑定原样返回
+  });
+
+  it("非法 execution 参数返回 400", async () => {
+    const res = fakeRes();
+    await setup().handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa&execution=abc"), res);
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/execution/);
+  });
+
   it("筛选参数透传到 CLI 查询（filter 经 URL 编码）", async () => {
     const run = vi.fn(async () => []);
     const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run });
@@ -430,5 +460,20 @@ describe("registerLoginApi", () => {
     await route.handler(fakeReq("POST", { server: "http://z" }) as never, res as never);
     expect(run).not.toHaveBeenCalled();
     expect(res.status).toBe(400);
+  });
+});
+
+describe("executionOverrideOf（多执行切换）", () => {
+  const req = (url: string) => ({ url }) as never;
+
+  it("缺省为 undefined", () => {
+    expect(executionOverrideOf(req("/x?workspace=/ws/a"))).toBeUndefined();
+  });
+
+  it("合法正整数透传，非法返回 null", () => {
+    expect(executionOverrideOf(req("/x?execution=66"))).toBe(66);
+    expect(executionOverrideOf(req("/x?execution=abc"))).toBeNull();
+    expect(executionOverrideOf(req("/x?execution=-1"))).toBeNull();
+    expect(executionOverrideOf(req("/x?execution=0"))).toBeNull();
   });
 });

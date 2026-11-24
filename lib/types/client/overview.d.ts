@@ -12,6 +12,8 @@ export interface WorkspaceBinding {
     product?: number;
     project?: number;
     execution?: number;
+    /** 可选执行列表（多执行绑定，任务视图切换下拉）。 */
+    executions?: number[];
 }
 /** 单视图数据行：任务用 name、Bug/需求/用例用 title（CLI 原样透传）。 */
 export interface OverviewRow {

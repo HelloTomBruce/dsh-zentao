@@ -101,6 +101,11 @@ export declare function registerFileApi(ctx: Context): () => void;
  * search 允许任意非控字符（含中文），仅拒绝 - 开头（防 CLI flag 注入）与超长。
  */
 export declare function panelFiltersOf(req: IncomingMessage): PanelFilters | null;
+/**
+ * 解析 execution 覆盖参数（仅 tasks 视图使用；面板多执行切换下拉）。
+ * 缺省 undefined；非法（非正整数）返回 null（调用方 400）。
+ */
+export declare function executionOverrideOf(req: IncomingMessage): number | undefined | null;
 /** 解析视图参数：缺省 tasks；不在白名单返回 null（调用方 400）。 */
 export declare function overviewViewOf(req: IncomingMessage): OverviewView | null;
 /**

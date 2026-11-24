@@ -18,7 +18,7 @@ const LOGIN_URL = "/__dsh-zentao__/login";
 const CONFIG_FILENAME = ".dsh-zentao.json";
 const CONFIG_SAMPLE = '{ "product": 2, "execution": 168 }';
 
-function useOverview(workspacePath: string, view: PanelTab, filterQuery: string): { data: OverviewResponse | null; refresh: () => void; loading: boolean } {
+function useOverview(workspacePath: string, view: PanelTab, filterQuery: string, executionParam: string): { data: OverviewResponse | null; refresh: () => void; loading: boolean } {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [tick, setTick] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -27,10 +27,11 @@ function useOverview(workspacePath: string, view: PanelTab, filterQuery: string)
     let alive = true;
     setLoading(true);
     // 首次挂载走服务端 60s 缓存（秒开）；显式 refresh（登录后）强制刷新。
-    // 按视图懒加载：切 Tab 换 view 即拉对应视图（服务端按 工作区+视图+筛选 缓存）。
+    // 按视图懒加载：切 Tab 换 view 即拉对应视图（服务端按 工作区+视图+执行+筛选 缓存）。
+    const exec = view === "tasks" && executionParam !== "" ? `&execution=${executionParam}` : "";
     const url = tick === 0
-      ? `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}&${filterQuery}`
-      : `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}&${filterQuery}&fresh=1`;
+      ? `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}${exec}&${filterQuery}`
+      : `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}${exec}&${filterQuery}&fresh=1`;
     fetch(url, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() as Promise<OverviewResponse> : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d) => { if (alive) setData(d); })
@@ -41,7 +42,7 @@ function useOverview(workspacePath: string, view: PanelTab, filterQuery: string)
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [tick, workspacePath, view, filterQuery]);
+  }, [tick, workspacePath, view, filterQuery, executionParam]);
   return { data, refresh: () => setTick((t) => t + 1), loading };
 }
 
@@ -474,7 +475,7 @@ type TabKey = "tasks" | "bugs" | "stories" | "testtasks" | "testcases";
 /** Tab 标题栏：图标 + 标题 + 未关闭 Bug 计数徽标（默认未关闭筛选，数据走服务端 60s 缓存）。 */
 export function ZentaoPanelTitle() {
   const workspace = useActiveWorkspace();
-  const { data } = useOverview(workspace.path, "bugs", buildOverviewQuery("bugs", defaultTabFilter("bugs")));
+  const { data } = useOverview(workspace.path, "bugs", buildOverviewQuery("bugs", defaultTabFilter("bugs")), "");
   const openBugs = data !== null && data.view === "bugs" && data.error === undefined ? openRowCount(data.rows) : 0;
   return createElement("span", { style: titleWrapperStyle },
     createElement(ZentaoTabIcon, { style: { marginRight: 6 } }),
@@ -587,7 +588,9 @@ export function ZentaoPanelBody() {
     testcases: defaultTabFilter("testcases"),
   });
   const filterQuery = buildOverviewQuery(tab, filterSel[tab]);
-  const { data, refresh, loading } = useOverview(workspace.path, tab, filterQuery);
+  // 任务视图的执行切换选择（"" = 用绑定默认；独立于筛选缓存键体系，服务端按 execution 分键）
+  const [selectedExecution, setSelectedExecution] = useState("");
+  const { data, refresh, loading } = useOverview(workspace.path, tab, filterQuery, selectedExecution);
   // 各视图行数（该视图加载后才知道；Tab 标签按需展示）
   const [counts, setCounts] = useState<Partial<Record<PanelTab, number>>>({});
   useEffect(() => {
@@ -669,6 +672,21 @@ export function ZentaoPanelBody() {
           onBack: () => setSelectedRow(null),
         })
       : createElement("div", { role: "tabpanel", style: { minHeight: "120px" } },
+          // 执行切换（多执行绑定时显示；切换即按该执行重新拉取任务）
+          tab === "tasks" && (viewData.config?.executions?.length ?? 0) > 1 && createElement("div", { style: { display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" } },
+            createElement("span", { style: { fontSize: "11px", color: T.textSecondary } }, "执行"),
+            createElement("select", {
+              value: selectedExecution !== "" ? selectedExecution : String(viewData.config?.execution ?? ""),
+              onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+                setSelectedExecution(e.target.value);
+                setSelectedRow(null);
+                setPage(1);
+                setSwitching(true);
+              },
+              style: filterSelectStyle,
+              "aria-label": "执行切换",
+            }, ...(viewData.config?.executions ?? []).map((id) =>
+              createElement("option", { key: id, value: String(id) }, `#${id}`)))),
           // 快捷过滤栏：状态/优先级（Bug 加严重程度）/关键词 + 全部 vs 指派给我
           createElement("div", { style: filterBarStyle },
             createElement("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },

@@ -17,8 +17,10 @@ export interface WorkspaceConfig {
   product?: number;
   /** 项目 ID（Bug 视图备选范围）。 */
   project?: number;
-  /** 执行 ID（任务视图必需；Bug 视图末选范围）。 */
+  /** 执行 ID（任务视图必需；Bug 视图末选范围；多执行绑定时为默认选中项）。 */
   execution?: number;
+  /** 可选执行列表（executions 数组绑定；任务视图提供切换下拉）。含 execution 本身。 */
+  executions?: number[];
 }
 
 export type ReadResult =
@@ -48,6 +50,29 @@ export function parseWorkspaceConfig(raw: string): { config: WorkspaceConfig | n
       continue;
     }
     config[key] = num;
+  }
+  // executions 数组（可选）：多执行绑定，任务视图提供切换下拉；正整数去重
+  if (obj.executions !== undefined) {
+    const arr = obj.executions;
+    if (!Array.isArray(arr)) {
+      bad.push("executions");
+    } else {
+      const list: number[] = [];
+      for (const item of arr) {
+        const num = typeof item === "number" ? item : typeof item === "string" && item.trim() !== "" ? Number(item) : Number.NaN;
+        if (!Number.isInteger(num) || num <= 0) {
+          bad.push("executions");
+          break;
+        }
+        if (!list.includes(num)) list.push(num);
+      }
+      if (!bad.includes("executions") && list.length > 0) {
+        config.executions = list;
+        // 单 execution 缺省时取数组首项为默认选中
+        const first = list[0];
+        if (config.execution === undefined && first !== undefined) config.execution = first;
+      }
+    }
   }
   if (bad.length > 0) {
     return { config: null, error: `字段 ${bad.join("、")} 必须是正整数` };
