@@ -25,9 +25,9 @@ export interface OverviewRow {
   [key: string]: unknown;
 }
 
-/** 概览视图（TASK-009 起按视图懒加载；后续任务扩展 stories/testcases/testtasks）。 */
-export type OverviewView = "tasks" | "bugs";
-export const OVERVIEW_VIEWS: readonly OverviewView[] = ["tasks", "bugs"];
+/** 概览视图（按视图懒加载；testcases/testtasks 待后续任务）。 */
+export type OverviewView = "tasks" | "bugs" | "stories";
+export const OVERVIEW_VIEWS: readonly OverviewView[] = ["tasks", "bugs", "stories"];
 
 export interface OverviewViewData {
   /** 本次返回的视图。 */
@@ -79,6 +79,7 @@ export async function fetchWithNodeRetry(run: () => Promise<unknown>, expectExec
  */
 export const TASK_PANEL_FIELDS = "id,name,status,pri,deadline,assignedTo,assignedToRealName,openedBy,execution";
 export const BUG_PANEL_FIELDS = "id,title,status,pri,severity,deadline,assignedTo,assignedToRealName,openedBy";
+export const STORY_PANEL_FIELDS = "id,title,status,pri,stage,plan,assignedTo,assignedToRealName,openedBy";
 
 /** 面板筛选（单视图作用域，经查询参数传入，白名单校验后拼入 CLI 参数）。 */
 export interface PanelFilters {
@@ -92,7 +93,7 @@ const OVERVIEW_PAGE_SIZE = 200;
 
 interface ViewDef {
   /** CLI 模块名。 */
-  module: "task" | "bug";
+  module: "task" | "bug" | "story";
   /** --fields 裁剪列。 */
   fields: string;
   /** 由绑定配置生成 scope 参数；null = 该视图缺绑定（返回空 + note）。 */
@@ -116,6 +117,12 @@ const VIEW_DEFS: Record<OverviewView, ViewDef> = {
       return s === null ? null : [`${s.flag}=${s.value}`];
     },
     missingNote: (f) => `配置缺 product / project / execution，Bug 视图为空（在 ${f} 中补充）`,
+  },
+  stories: {
+    module: "story",
+    fields: STORY_PANEL_FIELDS,
+    scopeArgs: (c) => (c.product !== undefined ? [`--product=${c.product}`] : null),
+    missingNote: (f) => `配置缺 product，需求视图为空（在 ${f} 中补充）`,
   },
 };
 

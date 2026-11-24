@@ -8,7 +8,7 @@
 import { createElement, useEffect, useState } from "react";
 import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import type { OverviewResponse, PanelTab, TabFilterState } from "./overview.ts";
-import { buildOverviewQuery, defaultTabFilter, FILTER_OPTIONS, openRowCount, PRI_OPTIONS, SEVERITY_OPTIONS } from "./overview.ts";
+import { buildOverviewQuery, defaultTabFilter, FILTER_OPTIONS, openRowCount, PRI_OPTIONS, SEVERITY_OPTIONS, STORY_STAGE_MAP } from "./overview.ts";
 import { useActiveWorkspace } from "./workspace.ts";
 import { ZentaoTabIcon } from "./icons.tsx";
 import { T } from "./theme.ts";
@@ -54,6 +54,9 @@ const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> =
   closed: { label: "已关闭", color: T.textTertiary, bg: T.surfaceMuted },
   active: { label: "激活", color: T.danger, bg: T.dangerSoft },
   resolved: { label: "已解决", color: T.success, bg: T.successSoft },
+  draft: { label: "草稿", color: T.textSecondary, bg: T.surfaceMuted },
+  reviewing: { label: "评审中", color: T.warn, bg: T.warnSoft },
+  launched: { label: "已启动", color: T.accent, bg: T.accentSoft },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -165,7 +168,7 @@ function DetailView({
   onBack,
 }: {
   row: Record<string, unknown>;
-  type: "tasks" | "bugs";
+  type: "tasks" | "bugs" | "stories";
   serverUrl?: string | undefined;
   onBack: () => void;
 }) {
@@ -177,10 +180,11 @@ function DetailView({
   const deadline = String(row.deadline ?? "未设置");
   const status = String(row.status ?? "");
   const pri = row.pri;
-  const desc = String(isTask ? row.desc ?? "" : row.steps ?? "");
+  const desc = String(isTask ? row.desc ?? "" : type === "stories" ? row.spec ?? "" : row.steps ?? "");
+  const isStory = type === "stories";
 
   const webUrl = serverUrl
-    ? `${serverUrl.replace(/\/+$/, "")}/${isTask ? "task" : "bug"}-view-${row.id}.html`
+    ? `${serverUrl.replace(/\/+$/, "")}/${isTask ? "task" : isStory ? "story" : "bug"}-view-${row.id}.html`
     : undefined;
 
   return createElement("div", { style: { display: "flex", flexDirection: "column", gap: "12px" } },
@@ -214,9 +218,17 @@ function DetailView({
         label: "严重程度",
         value: `级别 ${row.severity}`,
       }),
+      isStory && row.stage !== undefined && createElement(FieldItem, {
+        label: "阶段",
+        value: STORY_STAGE_MAP[String(row.stage)] ?? String(row.stage),
+      }),
+      isStory && row.plan !== undefined && row.plan !== "" && row.plan !== "0" && createElement(FieldItem, {
+        label: "所属计划",
+        value: String(row.plan),
+      }),
     ),
     createElement("div", { style: { marginTop: "4px" } },
-      createElement("div", { style: sectionTitleStyle }, isTask ? "任务描述" : "重现步骤"),
+      createElement("div", { style: sectionTitleStyle }, isTask ? "任务描述" : isStory ? "需求描述" : "重现步骤"),
       createElement("style", null, `
         .dsh-zentao-desc img {
           max-width: 100%;
@@ -261,7 +273,7 @@ function RowList({
 }: {
   rows: Array<Record<string, unknown>>;
   nameKey: "name" | "title";
-  type: "tasks" | "bugs";
+  type: "tasks" | "bugs" | "stories";
   page: number;
   onPageChange: (newPage: number) => void;
   onSelect: (row: Record<string, unknown>) => void;
@@ -284,7 +296,9 @@ function RowList({
       const deadline = row.deadline ? String(row.deadline) : undefined;
       const metaExtra = isTask
         ? (row.estimate !== undefined && row.estimate !== null && row.estimate !== "" ? `${row.estimate}h` : undefined)
-        : (row.severity ? `严重: ${row.severity}` : undefined);
+        : type === "stories"
+          ? (row.stage !== undefined && row.stage !== "" ? STORY_STAGE_MAP[String(row.stage)] ?? String(row.stage) : undefined)
+          : (row.severity ? `严重: ${row.severity}` : undefined);
 
       return createElement("div", {
         key: String(row.id ?? `${safePage}-${i}`),
@@ -302,7 +316,7 @@ function RowList({
         createElement("div", { style: rowMetaStyle },
           createElement("span", null, `👤 ${assigned}`),
           deadline && createElement("span", null, `📅 ${deadline}`),
-          metaExtra && createElement("span", null, isTask ? `⏱️ ${metaExtra}` : `🔥 ${metaExtra}`),
+          metaExtra && createElement("span", null, isTask ? `⏱️ ${metaExtra}` : type === "stories" ? `📌 ${metaExtra}` : `🔥 ${metaExtra}`),
           createElement("span", { style: { marginLeft: "auto", color: T.accent, fontSize: "11px" } }, "详情 →"),
         ),
       );
@@ -430,7 +444,7 @@ const loginSubmitStyle = (pending: boolean): CSSProperties => ({
   background: T.accent, color: "#fff", opacity: pending ? 0.7 : 1,
 });
 
-type TabKey = "tasks" | "bugs";
+type TabKey = "tasks" | "bugs" | "stories";
 
 /** Tab 标题栏：图标 + 标题 + 未关闭 Bug 计数徽标（默认未关闭筛选，数据走服务端 60s 缓存）。 */
 export function ZentaoPanelTitle() {
@@ -543,6 +557,7 @@ export function ZentaoPanelBody() {
   const [filterSel, setFilterSel] = useState<Record<PanelTab, TabFilterState>>({
     tasks: defaultTabFilter("tasks"),
     bugs: defaultTabFilter("bugs"),
+    stories: defaultTabFilter("stories"),
   });
   const filterQuery = buildOverviewQuery(tab, filterSel[tab]);
   const { data, refresh, loading } = useOverview(workspace.path, tab, filterQuery);
@@ -600,6 +615,7 @@ export function ZentaoPanelBody() {
   const tabs: { key: TabKey; label: string }[] = [
     { key: "tasks", label: `任务${counts.tasks !== undefined ? `（${counts.tasks}）` : ""}` },
     { key: "bugs", label: `Bug${counts.bugs !== undefined ? `（${counts.bugs}）` : ""}` },
+    { key: "stories", label: `需求${counts.stories !== undefined ? `（${counts.stories}）` : ""}` },
   ];
 
   return createElement("div", { style: paneWrapperStyle },

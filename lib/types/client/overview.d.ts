@@ -6,8 +6,8 @@
  * 架构（TASK-009 起）：overview 端点按 view 参数返回**单视图**数据
  * {view, rows, ...}，面板切 Tab 才拉对应视图（懒加载 + 服务端按视图缓存）。
  */
-/** 视图 key（后续任务扩展 stories/testcases/testtasks）。 */
-export type PanelTab = "tasks" | "bugs";
+/** 视图 key（testcases/testtasks 待后续任务）。 */
+export type PanelTab = "tasks" | "bugs" | "stories";
 export interface WorkspaceBinding {
     product?: number;
     project?: number;
@@ -46,13 +46,15 @@ export interface FilterOption {
 }
 /**
  * 面板状态筛选选项（已按真实服务端行为校准）：
- * - tasks：本服务端（禅道 22.0 集群 + app=project 上下文）--browse-type 被静默忽略
- *   （unclosed 仍返回全部 2052 条），故全部状态项改走 --filter 表达式
+ * - tasks/stories：本服务端对这两类 list 的 --browse-type 无效（tasks 被静默
+ *   忽略、story 直接不支持），全部状态项走 --filter 表达式
  * - bugs：--browse-type 有效（unclosed 726→88），默认项用它；状态明细项
  *   统一 browse=all + filter（避免与服务端默认状态集相交导致空结果）
  */
 export declare const FILTER_OPTIONS: Record<PanelTab, readonly FilterOption[]>;
 export declare const DEFAULT_FILTER_KEY: Record<PanelTab, string>;
+/** 需求阶段（stage）中文映射：需求生命周期阶段，独立于 status。 */
+export declare const STORY_STAGE_MAP: Record<string, string>;
 /** 优先级选项（tasks/bugs 通用；空 key = 不筛选）。 */
 export declare const PRI_OPTIONS: readonly {
     key: string;
