@@ -180,12 +180,72 @@ describe("buildCliArgs — 查询参数（browseType/filter/search/sort/pick/max
   });
 
   it("查询参数在非 list/my 动作上报错（防止被静默忽略）", () => {
-    expect(() => buildCliArgs({ module: "bug", action: "get", id: 1, pick: "id" })).toThrow(/仅在 list 或 my/);
-    expect(() => buildCliArgs({ module: "bug", action: "create", fields: { title: "t" }, maxItems: 5 } as never)).toThrow(/仅在 list 或 my/);
+    expect(() => buildCliArgs({ module: "bug", action: "get", id: 1, pick: "id" })).toThrow(/仅在列表式动作/);
+    expect(() => buildCliArgs({ module: "bug", action: "create", fields: { title: "t" }, maxItems: 5 } as never)).toThrow(/仅在列表式动作/);
   });
 
   it("execution 的项目范围与显式 filter 合并为一个 --filter（避免 OR 语义）", () => {
     expect(buildCliArgs({ module: "execution", action: "list", project: 60, filter: "status=doing" }))
       .toEqual(["execution", "list", "--filter=project=60,status=doing", "--all"]);
+  });
+});
+
+describe("buildCliArgs — 0.5.0 新模块（knowledge/doc/weekly/relation）与附件", () => {
+  it("knowledge list：id 即 libID；查询参数可用", () => {
+    expect(buildCliArgs({ module: "knowledge", action: "list", id: 12, pick: "id,title" }))
+      .toEqual(["knowledge", "list", "12", "--fields=id,title", "--all"]);
+    expect(buildCliArgs({ module: "knowledge", action: "list", fields: { libID: 12 } }))
+      .toEqual(["knowledge", "list", "12", "--all"]);
+  });
+
+  it("knowledge search/embeddingsSearch：--data 透传（keywords/libIDs 数组）", () => {
+    expect(buildCliArgs({ module: "knowledge", action: "search", fields: { keywords: ["登录"], libIDs: [12] } }))
+      .toEqual(["knowledge", "search", "--data", '{"keywords":["登录"],"libIDs":[12]}']);
+    expect(buildCliArgs({ module: "knowledge", action: "embeddingsSearch", fields: { keyword: "登录", libIDs: [12], minSimilarity: 0.6 } }))
+      .toEqual(["knowledge", "embeddings-search", "--data", '{"keyword":"登录","libIDs":[12],"minSimilarity":0.6}']);
+  });
+
+  it("doc：动作转 kebab 子命令，spaceID/libID 提为 flag，无 --all", () => {
+    expect(buildCliArgs({ module: "doc", action: "myDocs", fields: { spaceID: 3, libID: 8 } }))
+      .toEqual(["doc", "my-docs", "--space-id=3", "--lib-id=8"]);
+    expect(buildCliArgs({ module: "doc", action: "productDocs", fields: { libID: 8 }, pick: "id,title" }))
+      .toEqual(["doc", "product-docs", "--lib-id=8", "--fields=id,title"]);
+    expect(buildCliArgs({ module: "doc", action: "get", id: 12 })).toEqual(["doc", "get", "12"]);
+  });
+
+  it("weekly：标准 CRUD，list 用 --project scope", () => {
+    expect(buildCliArgs({ module: "weekly", action: "list", project: 5 }))
+      .toEqual(["weekly", "list", "--project=5", "--all"]);
+    expect(buildCliArgs({ module: "weekly", action: "create", fields: { project: 5, name: "w1" } }))
+      .toEqual(["weekly", "create", "--project-id=5", "--data", '{"name":"w1"}']);
+  });
+
+  it("relation list：objectType 位置参数 + --object-id；多余字段报错", () => {
+    expect(buildCliArgs({ module: "relation", action: "list", id: 123, fields: { objectType: "story" } }))
+      .toEqual(["relation", "list", "story", "--object-id=123"]);
+    expect(() => buildCliArgs({ module: "relation", action: "list", id: 123 }))
+      .toThrow(/objectType/);
+    expect(() => buildCliArgs({ module: "relation", action: "list", id: 123, fields: { objectType: "story", foo: 1 } }))
+      .toThrow(/不支持字段/);
+  });
+
+  it("relation candidates：需 relatedObjectType，带 --all", () => {
+    expect(buildCliArgs({ module: "relation", action: "candidates", id: 123, fields: { objectType: "story", relatedObjectType: "task" } }))
+      .toEqual(["relation", "candidates", "story", "--object-id=123", "--related-object-type=task", "--all"]);
+    expect(() => buildCliArgs({ module: "relation", action: "candidates", id: 123, fields: { objectType: "story" } }))
+      .toThrow(/relatedObjectType/);
+  });
+
+  it("file read：默认落盘路径与 fields.saveTo", () => {
+    expect(buildCliArgs({ module: "file", action: "read", id: 9 }))
+      .toEqual(["file", "read", "9", "--output", ".dsh-zentao/attachments/file-9"]);
+    expect(buildCliArgs({ module: "file", action: "read", id: 9, fields: { saveTo: "docs/a.png" } }))
+      .toEqual(["file", "read", "9", "--output", "docs/a.png"]);
+  });
+
+  it("file get 透传；新模块查询参数误用于 get 报错", () => {
+    expect(buildCliArgs({ module: "file", action: "get", id: 9 })).toEqual(["file", "get", "9"]);
+    expect(() => buildCliArgs({ module: "knowledge", action: "get", id: 5, pick: "id" })).toThrow(/列表式动作/);
+    expect(() => buildCliArgs({ module: "doc", action: "get", id: 5, sort: "id:asc" })).toThrow(/列表式动作/);
   });
 });

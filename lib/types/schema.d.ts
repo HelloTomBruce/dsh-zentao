@@ -8,8 +8,8 @@
  *   create 时按模块映射为 `--product-id` / `--execution-id` 等独立 flag
  * - file create 走 multipart formdata 不支持 JSON，字段转 kebab-case flag
  */
-export type ZentaoModule = "program" | "product" | "project" | "execution" | "story" | "epic" | "requirement" | "bug" | "task" | "testcase" | "testtask" | "productplan" | "build" | "release" | "feedback" | "ticket" | "system" | "user" | "file" | "my";
-export type ZentaoAction = "list" | "get" | "create" | "update" | "delete" | "activate" | "close" | "resolve" | "start" | "finish" | "change" | "confirm" | "todos" | "tasks" | "bugs" | "stories" | "epics" | "requirements" | "testtasks" | "projects" | "feedbacks" | "tickets" | "testcases" | "meetings" | "issues" | "risks";
+export type ZentaoModule = "program" | "product" | "project" | "execution" | "story" | "epic" | "requirement" | "bug" | "task" | "testcase" | "testtask" | "productplan" | "build" | "release" | "feedback" | "ticket" | "system" | "user" | "file" | "knowledge" | "doc" | "weekly" | "relation" | "my";
+export type ZentaoAction = "list" | "get" | "create" | "update" | "delete" | "activate" | "close" | "resolve" | "start" | "finish" | "change" | "confirm" | "read" | "search" | "candidates" | "embeddingsSearch" | "mySpaces" | "teamSpaces" | "productSpaces" | "projectSpaces" | "myLibs" | "teamLibs" | "productLibs" | "projectLibs" | "myDocs" | "teamDocs" | "productDocs" | "projectDocs" | "todos" | "tasks" | "bugs" | "stories" | "epics" | "requirements" | "testtasks" | "projects" | "feedbacks" | "tickets" | "testcases" | "meetings" | "issues" | "risks";
 /** fields 中可作为 create scope 的键（execution 视作 executionID 的别名）。 */
 type ScopeField = "product" | "project" | "executionID";
 interface ModuleInfo {

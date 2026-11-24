@@ -15,9 +15,14 @@ export type ZentaoModule =
   | "bug" | "task" | "testcase" | "testtask"
   | "productplan" | "build" | "release"
   | "feedback" | "ticket" | "system" | "user" | "file"
+  | "knowledge" | "doc" | "weekly" | "relation"
   | "my";
 
 export type ZentaoAction = "list" | "get" | "create" | "update" | "delete" | "activate" | "close" | "resolve" | "start" | "finish" | "change" | "confirm"
+  | "read" | "search" | "candidates" | "embeddingsSearch"
+  | "mySpaces" | "teamSpaces" | "productSpaces" | "projectSpaces"
+  | "myLibs" | "teamLibs" | "productLibs" | "projectLibs"
+  | "myDocs" | "teamDocs" | "productDocs" | "projectDocs"
   | "todos" | "tasks" | "bugs" | "stories" | "epics" | "requirements" | "testtasks" | "projects" | "feedbacks" | "tickets" | "testcases" | "meetings" | "issues" | "risks";
 
 /** fields 中可作为 create scope 的键（execution 视作 executionID 的别名）。 */
@@ -64,8 +69,17 @@ export const MODULE_INFO: Record<ZentaoModule, ModuleInfo> = {
   ticket:      { label: "工单",   scopeFlags: ["--product"], createScope: { product: "--product" }, actions: set("list", "get", "create", "update", "delete", "activate", "close") },
   system:      { label: "应用",   scopeFlags: ["--product"], createScope: { product: "--product-id" }, actions: set("list", "get", "create", "update", "delete") },
   user:        { label: "用户",   scopeFlags: [], actions: set("list", "get", "create", "update", "delete") },
-  // file create 为 multipart formdata（不支持 --data JSON），字段转 kebab flag
-  file:        { label: "附件",   scopeFlags: [], actions: set("create", "delete") },
+  // file create 为 multipart formdata（不支持 --data JSON），字段转 kebab flag；
+  // get 取附件信息；read 下载附件内容（--output 落盘，需服务端 ≥ 23.0）
+  file:        { label: "附件",   scopeFlags: [], actions: set("create", "delete", "get", "read") },
+  // 0.5.0 新模块：AI 知识库（search 关键词/embeddingsSearch 向量搜索，需服务端 ≥ 22.7）
+  knowledge:   { label: "AI 知识库", scopeFlags: [], actions: set("list", "get", "search", "embeddingsSearch") },
+  // 文档模块：动作即子命令（myDocs → my-docs），列表需 fields.spaceID/libID（需服务端 ≥ 22.5）
+  doc:         { label: "文档",   scopeFlags: [], actions: set("mySpaces", "teamSpaces", "productSpaces", "projectSpaces", "myLibs", "teamLibs", "productLibs", "projectLibs", "myDocs", "teamDocs", "productDocs", "projectDocs", "get") },
+  // 项目周报（需服务端 ≥ 22.7）
+  weekly:      { label: "项目周报", scopeFlags: ["--project"], createScope: { project: "--project-id" }, actions: set("list", "get", "create", "update", "delete") },
+  // 对象关联：list/candidates 的 objectType 是位置参数，objectID 用工具 id 入参（需服务端 ≥ 22.7）
+  relation:    { label: "对象关联", scopeFlags: [], actions: set("list", "candidates") },
   // 地盘模块：动作即资源名（zentao my tasks），列表式，无需 id 与范围参数
   my:          { label: "地盘（指派给我的）", scopeFlags: [], actions: set("todos", "tasks", "bugs", "stories", "epics", "requirements", "testtasks", "projects", "feedbacks", "tickets", "testcases", "meetings", "issues", "risks") },
 };
@@ -164,6 +178,13 @@ function hasQueryArgs(args: ZentaoArgs): boolean {
     || args.maxItems !== undefined || args.htmlToMarkdown !== undefined;
 }
 
+/** 列表式动作（查询参数生效）：list、my 全部动作、doc 的非 get 动作、relation 全部动作。 */
+function isListLike(module: ZentaoModule, action: ZentaoAction): boolean {
+  if (module === "my" || module === "relation") return true;
+  if (module === "doc") return action !== "get";
+  return action === "list";
+}
+
 /**
  * create 参数构造：fields 中的 scope 字段（按模块 createScope 映射表）提为
  * 独立 flag，其余经 --data 透传。模型在 fields 里写 execution 或 executionID
@@ -194,14 +215,75 @@ export function buildCliArgs(args: ZentaoArgs): string[] {
   if (!info.actions.has(action)) {
     throw new Error(`${info.label}(${module}) 不支持动作 ${action}，可选：${[...info.actions].join("/")}`);
   }
-  // 查询参数仅 list/地盘动作生效，防止误写到 get/create 等动作上被静默忽略
-  if (action !== "list" && module !== "my" && hasQueryArgs(args)) {
-    throw new Error(`browseType/filter/search/searchFields/sort/pick/maxItems/htmlToMarkdown 仅在 list 或 my 地盘动作上生效（当前 ${action}）`);
+  // 查询参数仅列表式动作生效，防止误写到 get/create 等动作上被静默忽略
+  if (!isListLike(module, action) && hasQueryArgs(args)) {
+    throw new Error(`browseType/filter/search/searchFields/sort/pick/maxItems/htmlToMarkdown 仅在列表式动作上生效（当前 ${module} ${action}）`);
   }
 
   // 地盘模块：动作即资源名（zentao my tasks），列表式，无需 id 与范围参数。
   if (module === "my") {
     return [module, action, ...queryArgs(args), "--all"];
+  }
+
+  // 文档模块：动作即子命令（myDocs → my-docs）；spaceID/libID 从 fields 提为 flag；
+  // doc 列表 API 单页返回（不支持 --all），查询参数（filter/search/pick/maxItems 等）可用
+  if (module === "doc") {
+    if (action === "get") {
+      if (id === undefined) throw new Error(`${info.label}(doc) get 需要 id`);
+      return ["doc", "get", String(id)];
+    }
+    const docArgs = ["doc", kebab(action)];
+    if (fields?.spaceID !== undefined) docArgs.push(`--space-id=${fields.spaceID}`);
+    if (fields?.libID !== undefined) docArgs.push(`--lib-id=${fields.libID}`);
+    docArgs.push(...queryArgs(args));
+    return docArgs;
+  }
+
+  // AI 知识库：list 需 libID（id 或 fields.libID）；search/embeddingsSearch 经 --data 透传
+  // （search: {keywords[], libIDs[]}；embeddingsSearch: {keyword, libIDs[], minSimilarity?, limit?}）
+  if (module === "knowledge") {
+    if (action === "list") {
+      const libID = id ?? fields?.libID;
+      if (libID === undefined) throw new Error(`${info.label}(knowledge) list 需要 id（知识库 libID）或 fields.libID`);
+      return ["knowledge", "list", String(libID), ...queryArgs(args), "--all"];
+    }
+    if (action === "get") {
+      if (id === undefined) throw new Error(`${info.label}(knowledge) get 需要 id`);
+      return ["knowledge", "get", String(id)];
+    }
+    return ["knowledge", kebab(action), ...dataArgs(fields)];
+  }
+
+  // 对象关联：objectType 为位置参数，objectID 用 id 入参；candidates 另需 fields.relatedObjectType。
+  // relation list 为单页 API（无 --all）；candidates 支持 --all。
+  if (module === "relation") {
+    const objectType = fields?.objectType;
+    if (objectType === undefined || id === undefined) {
+      throw new Error(`${info.label}(relation) ${action} 需要 fields.objectType 与 id（objectID），如 fields={objectType:"bug"} id=123`);
+    }
+    const rest = { ...fields };
+    delete rest.objectType;
+    const relArgs = ["relation", action, String(objectType), `--object-id=${id}`];
+    if (action === "candidates") {
+      const related = rest.relatedObjectType;
+      if (related === undefined) throw new Error(`relation candidates 需要 fields.relatedObjectType（候选对象类型，如 task/bug）`);
+      relArgs.push(`--related-object-type=${String(related)}`);
+      delete rest.relatedObjectType;
+    }
+    if (Object.keys(rest).length > 0) {
+      throw new Error(`relation ${action} 不支持字段：${Object.keys(rest).join("、")}（仅 objectType/relatedObjectType + 查询参数）`);
+    }
+    relArgs.push(...queryArgs(args));
+    if (action === "candidates") relArgs.push("--all");
+    return relArgs;
+  }
+
+  // 附件下载：file read <id> --output <路径>（默认 .dsh-zentao/attachments/file-<id>，
+  // 相对路径基于 dsh 宿主工作目录；需服务端 ≥ 23.0）
+  if (module === "file" && action === "read") {
+    if (id === undefined) throw new Error(`${info.label}(file) read 需要 id（附件 ID）`);
+    const saveTo = fields?.saveTo !== undefined ? String(fields.saveTo) : `.dsh-zentao/attachments/file-${id}`;
+    return ["file", "read", String(id), "--output", saveTo];
   }
 
   if (action === "list") {

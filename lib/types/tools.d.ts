@@ -4,13 +4,13 @@ export declare const ZENTAO_PARAMETERS: {
         readonly type: "string";
         readonly required: true;
         readonly enum: readonly import("./schema.ts").ZentaoModule[];
-        readonly description: "禅道模块：program/product/project/execution/story/epic/requirement/bug/task/testcase/testtask/productplan/build/release/feedback/ticket/system/user/file/my（地盘，指派给我的）";
+        readonly description: "禅道模块：program/product/project/execution/story/epic/requirement/bug/task/testcase/testtask/productplan/build/release/feedback/ticket/system/user/file（附件，read 下载需服务端 23.0+）/knowledge（AI 知识库，22.7+）/doc（文档，22.5+）/weekly（项目周报，22.7+）/relation（对象关联，22.7+）/my（地盘，指派给我的，22.5+）";
     };
     readonly action: {
         readonly type: "string";
         readonly required: true;
-        readonly enum: readonly ["list", "get", "create", "update", "delete", "activate", "close", "resolve", "confirm", "start", "finish", "change", "todos", "tasks", "bugs", "stories", "epics", "requirements", "testtasks", "projects", "feedbacks", "tickets", "testcases", "meetings", "issues", "risks"];
-        readonly description: "动作：list 列表 / get 详情 / create 创建 / update 更新 / delete 删除 / 状态流转（activate/close/resolve/confirm/start/finish/change，按模块校验）；模块为 my 时动作即资源名（tasks/bugs/stories… 指派给我的）";
+        readonly enum: readonly ["list", "get", "create", "update", "delete", "activate", "close", "resolve", "confirm", "start", "finish", "change", "read", "search", "candidates", "embeddingsSearch", "mySpaces", "teamSpaces", "productSpaces", "projectSpaces", "myLibs", "teamLibs", "productLibs", "projectLibs", "myDocs", "teamDocs", "productDocs", "projectDocs", "todos", "tasks", "bugs", "stories", "epics", "requirements", "testtasks", "projects", "feedbacks", "tickets", "testcases", "meetings", "issues", "risks"];
+        readonly description: "动作：list 列表 / get 详情 / create 创建 / update 更新 / delete 删除 / 状态流转（activate/close/resolve/confirm/start/finish/change，按模块校验）；file 模块另有 read（下载附件到本地，fields.saveTo 指定路径）；knowledge 模块有 search/embeddingsSearch；relation 模块有 list/candidates；doc 模块动作即资源名（myDocs/productLibs…）；模块为 my 时动作即资源名（tasks/bugs/stories… 指派给我的）";
     };
     readonly id: {
         readonly type: "number";
