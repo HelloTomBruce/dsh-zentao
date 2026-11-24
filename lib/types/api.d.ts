@@ -4,6 +4,7 @@
  * fetch。数据经 zentao CLI 子进程获取（凭证由 CLI 内部管理），同源路由，
  * 不暴露任何凭证。登录端点与配置见文件末尾。
  */
+import type { IncomingMessage } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
 import { type CurrentProfileInfo } from "./lib/config.ts";
 import { readWorkspaceConfig, type WorkspaceConfig } from "./lib/workspace-config.ts";
@@ -49,13 +50,20 @@ interface Queries {
  */
 export declare const TASK_PANEL_FIELDS = "id,name,status,pri,deadline,assignedTo,assignedToRealName,openedBy,execution";
 export declare const BUG_PANEL_FIELDS = "id,title,status,pri,severity,deadline,assignedTo,assignedToRealName,openedBy";
+/** 面板状态筛选（经查询参数传入，白名单校验后拼入 CLI 参数）。 */
+export interface PanelFilters {
+    taskBrowse?: string;
+    taskFilter?: string;
+    bugBrowse?: string;
+    bugFilter?: string;
+}
 /**
  * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
- * - tasks: `task list --execution-id=<id> --fields=<面板列> --all`（execution 缺省 → 空数组 + note）
- * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> --all`
+ * - tasks: `task list --execution-id=<id> --fields=<面板列> [--browse-type/--filter] --all`（execution 缺省 → 空数组 + note）
+ * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> [--browse-type/--filter] --all`
  * 默认 run 解包 runZentao 的 {data, meta}，只取 data（面板暂不需要完整性元数据）。
  */
-export declare function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>): Queries;
+export declare function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>, filters?: PanelFilters): Queries;
 /** 聚合两次查询；单边失败时另一边仍返回，并透出首个错误信息。 */
 export declare function overviewData(config: WorkspaceConfig, queries: Queries, profileInfo?: CurrentProfileInfo | null): Promise<OverviewData>;
 export interface LoginBody {
@@ -79,6 +87,11 @@ export declare function registerLoginApi(ctx: Context, run?: RunFn): () => void;
  * 解决浏览器同源保护、CORS 与鉴权导致 Bug 详情中图片无法展示的问题。
  */
 export declare function registerFileApi(ctx: Context): () => void;
+/**
+ * 解析面板筛选参数（taskBrowse/taskFilter/bugBrowse/bugFilter）。
+ * 返回 null 表示存在非法参数（调用方应 400）；全部缺省返回 {}。
+ */
+export declare function panelFiltersOf(req: IncomingMessage): PanelFilters | null;
 /**
  * GET /__dsh-zentao__/overview?workspace=<工作区绝对路径>[&fresh=1]：
  * 读该工作区的 .dsh-zentao.json，按配置拉取任务与 Bug。缓存按工作区分键

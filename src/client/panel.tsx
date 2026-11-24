@@ -7,8 +7,8 @@
  */
 import { createElement, useEffect, useState } from "react";
 import type { ChangeEvent, CSSProperties, MouseEvent } from "react";
-import type { OverviewResponse } from "./overview.ts";
-import { overviewSummary } from "./overview.ts";
+import type { OverviewResponse, PanelTab } from "./overview.ts";
+import { buildOverviewQuery, DEFAULT_FILTER_KEY, FILTER_OPTIONS, overviewSummary } from "./overview.ts";
 import { useActiveWorkspace } from "./workspace.ts";
 import { ZentaoTabIcon } from "./icons.tsx";
 
@@ -17,16 +17,17 @@ const LOGIN_URL = "/__dsh-zentao__/login";
 const CONFIG_FILENAME = ".dsh-zentao.json";
 const CONFIG_SAMPLE = '{ "product": 2, "execution": 168 }';
 
-function useOverview(workspacePath: string): { data: OverviewResponse | null; refresh: () => void } {
+function useOverview(workspacePath: string, filterQuery: string): { data: OverviewResponse | null; refresh: () => void } {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (workspacePath === "") return;
     let alive = true;
     // 首次挂载走服务端 60s 缓存（秒开）；显式 refresh（登录后）强制刷新。
+    // 筛选条件经 filterQuery 进缓存键，切换筛选即自动拉取对应数据。
     const url = tick === 0
-      ? `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}`
-      : `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&fresh=1`;
+      ? `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&${filterQuery}`
+      : `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&${filterQuery}&fresh=1`;
     fetch(url, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() as Promise<OverviewResponse> : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d) => { if (alive) setData(d); })
@@ -36,7 +37,7 @@ function useOverview(workspacePath: string): { data: OverviewResponse | null; re
         setData({ tasks: [], bugs: [], error: message });
       });
     return () => { alive = false; };
-  }, [tick, workspacePath]);
+  }, [tick, workspacePath, filterQuery]);
   return { data, refresh: () => setTick((t) => t + 1) };
 }
 
@@ -410,10 +411,10 @@ const loginSubmitStyle = (pending: boolean): CSSProperties => ({
 
 type TabKey = "tasks" | "bugs";
 
-/** Tab 标题栏：图标 + 标题 + 未关闭 Bug 计数徽标（数据走服务端 60s 缓存）。 */
+/** Tab 标题栏：图标 + 标题 + 未关闭 Bug 计数徽标（默认筛选，数据走服务端 60s 缓存）。 */
 export function ZentaoPanelTitle() {
   const workspace = useActiveWorkspace();
-  const { data } = useOverview(workspace.path);
+  const { data } = useOverview(workspace.path, buildOverviewQuery(DEFAULT_FILTER_KEY.tasks, DEFAULT_FILTER_KEY.bugs));
   const summary = data === null ? null : overviewSummary(data);
   return createElement("span", { style: titleWrapperStyle },
     createElement(ZentaoTabIcon, { style: { marginRight: 6 } }),
@@ -450,15 +451,21 @@ function UnconfiguredGuide({ workspace, onRefresh }: {
   );
 }
 
-/** Tab 正文：按工作区绑定展示 任务 / Bug 两视图 + 详情查看 + 登录入口。 */
+/** Tab 正文：按工作区绑定展示 任务 / Bug 两视图 + 状态筛选 + 详情查看 + 登录入口。 */
 export function ZentaoPanelBody() {
   const workspace = useActiveWorkspace();
-  const { data, refresh } = useOverview(workspace.path);
   const [showLogin, setShowLogin] = useState(false);
   const [tab, setTab] = useState<TabKey>("tasks");
   const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(null);
   const [onlyMine, setOnlyMine] = useState(false);
   const [page, setPage] = useState(1);
+  // 状态筛选：每个视图独立记住选择；改动即经查询串触发服务端重查
+  const [filterSel, setFilterSel] = useState<Record<PanelTab, string>>({
+    tasks: DEFAULT_FILTER_KEY.tasks,
+    bugs: DEFAULT_FILTER_KEY.bugs,
+  });
+  const filterQuery = buildOverviewQuery(filterSel.tasks, filterSel.bugs);
+  const { data, refresh } = useOverview(workspace.path, filterQuery);
 
   if (workspace.path === "") {
     return createElement("div", { style: paneWrapperStyle },
@@ -518,9 +525,21 @@ export function ZentaoPanelBody() {
           onBack: () => setSelectedRow(null),
         })
       : createElement("div", { role: "tabpanel", style: { minHeight: "120px" } },
-          // 快捷过滤栏：全部 vs 指派给我
+          // 快捷过滤栏：状态筛选 + 全部 vs 指派给我
           createElement("div", { style: filterBarStyle },
-            createElement("div", { style: { display: "flex", gap: "6px" } },
+            createElement("div", { style: { display: "flex", gap: "6px", alignItems: "center" } },
+              createElement("select", {
+                value: filterSel[tab],
+                onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+                  const v = e.target.value;
+                  setFilterSel((s) => ({ ...s, [tab]: v }));
+                  setSelectedRow(null);
+                  setPage(1);
+                },
+                style: filterSelectStyle,
+                "aria-label": "状态筛选",
+              }, ...FILTER_OPTIONS[tab].map((o) =>
+                createElement("option", { key: o.key, value: o.key }, o.label))),
               createElement("button", {
                 onClick: () => { setOnlyMine(false); setSelectedRow(null); setPage(1); },
                 style: filterBtnStyle(!onlyMine),
@@ -594,6 +613,18 @@ const filterBtnStyle = (active: boolean): CSSProperties => ({
   borderRadius: "12px",
   transition: "all 0.15s ease",
 });
+
+/** 状态筛选下拉：与过滤按钮同高的小型 select。 */
+const filterSelectStyle: CSSProperties = {
+  border: "1px solid var(--dsh-border, #e3e6ea)",
+  background: "var(--dsh-surface, #fff)",
+  color: "var(--dsh-text, #1f2329)",
+  cursor: "pointer",
+  padding: "3px 6px",
+  fontSize: "11px",
+  borderRadius: "12px",
+  outline: "none",
+};
 
 const userTagStyle: CSSProperties = {
   fontSize: "11px",

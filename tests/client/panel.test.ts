@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { overviewSummary, type OverviewResponse } from "../../src/client/overview.js";
+import { buildOverviewQuery, DEFAULT_FILTER_KEY, FILTER_OPTIONS, overviewSummary, type OverviewResponse } from "../../src/client/overview.js";
 import { sanitizeAndFormatHtml } from "../../src/client/panel.js";
 
 describe("overviewSummary", () => {
@@ -26,6 +26,34 @@ describe("overviewSummary", () => {
   it("error 时返回零计数 + error 标记", () => {
     const res: OverviewResponse = { tasks: [], bugs: [], error: "未登录" };
     expect(overviewSummary(res)).toEqual({ tasks: 0, bugs: 0, openBugs: 0, error: "未登录" });
+  });
+});
+
+describe("buildOverviewQuery（状态筛选查询串）", () => {
+  it("默认选项不带参数（与现状一致）", () => {
+    expect(buildOverviewQuery(DEFAULT_FILTER_KEY.tasks, DEFAULT_FILTER_KEY.bugs)).toBe("");
+  });
+
+  it("任务状态明细：browse=all + filter=status=doing", () => {
+    expect(buildOverviewQuery("doing", DEFAULT_FILTER_KEY.bugs)).toBe("taskBrowse=all&taskFilter=status%3Ddoing");
+  });
+
+  it("Bug 状态明细与全部：正确映射 browse/filter", () => {
+    expect(buildOverviewQuery(DEFAULT_FILTER_KEY.tasks, "resolved")).toBe("bugBrowse=all&bugFilter=status%3Dresolved");
+    expect(buildOverviewQuery("all", "all")).toBe("taskBrowse=all&bugBrowse=all");
+  });
+
+  it("未知 key 回退到默认项（不带参数）", () => {
+    expect(buildOverviewQuery("nope", "nope")).toBe("");
+  });
+
+  it("选项定义完整性：默认 key 必须存在于选项中", () => {
+    expect(FILTER_OPTIONS.tasks.some((o) => o.key === DEFAULT_FILTER_KEY.tasks)).toBe(true);
+    expect(FILTER_OPTIONS.bugs.some((o) => o.key === DEFAULT_FILTER_KEY.bugs)).toBe(true);
+    // 状态明细项必须同时带 browse=all（避免与服务端默认状态集相交导致空结果）
+    for (const o of [...FILTER_OPTIONS.tasks, ...FILTER_OPTIONS.bugs]) {
+      if (o.filter !== undefined) expect(o.browse).toBe("all");
+    }
   });
 });
 

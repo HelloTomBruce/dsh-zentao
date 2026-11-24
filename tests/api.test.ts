@@ -6,6 +6,7 @@ import {
   overviewData,
   createQueries,
   buildLoginArgs,
+  panelFiltersOf,
   TASK_PANEL_FIELDS,
   BUG_PANEL_FIELDS,
 } from "../src/api.js";
@@ -48,6 +49,16 @@ describe("createQueries", () => {
     const tasks = await createQueries({ execution: 65 }, run).tasks();
     expect(run).toHaveBeenCalledTimes(2);
     expect(tasks).toEqual([{ id: 16561, execution: "65", name: "全量数据同步" }]);
+  });
+
+  it("筛选参数透传：taskBrowse/taskFilter 拼入 task 查询，bugFilter 拼入 bug 查询", async () => {
+    const run = vi.fn(async () => []);
+    const queries = createQueries({ product: 2, execution: 168 }, run, {
+      taskBrowse: "all", taskFilter: "status=doing", bugFilter: "status=active",
+    });
+    await Promise.all([queries.tasks(), queries.bugs()]);
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--browse-type=all", "--filter=status=doing", "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, "--filter=status=active", "--all"]);
   });
 });
 
@@ -223,6 +234,59 @@ describe("registerOverviewApi", () => {
     expect(run).toHaveBeenCalledTimes(2);
     await call(true);
     expect(run).toHaveBeenCalledTimes(4);
+  });
+
+  it("筛选参数透传到 CLI 查询（taskFilter 经 URL 编码）", async () => {
+    const run = vi.fn(async () => []);
+    const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run });
+    const res = fakeRes();
+    await route.handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}`), res);
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--browse-type=all", "--filter=status=doing", "--all"]);
+    expect(res.status).toBe(200);
+  });
+
+  it("非法筛选参数返回 400（白名单校验）", async () => {
+    const res = fakeRes();
+    await setup().handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa&taskFilter=${encodeURIComponent("status=doing; rm -rf /")}`), res);
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/非法筛选参数/);
+  });
+
+  it("不同筛选条件独立缓存（同工作区不同筛选各查一次）", async () => {
+    const run = vi.fn(async () => []);
+    const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run });
+    const hit = async (suffix: string) => {
+      const res = fakeRes();
+      await route.handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa${suffix}`), res);
+      return res;
+    };
+    await hit("");
+    await hit("");
+    expect(run).toHaveBeenCalledTimes(2);
+    await hit(`&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}`);
+    expect(run).toHaveBeenCalledTimes(4); // 新筛选条件 → 缓存未命中，重新查询
+    await hit(`&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}`);
+    expect(run).toHaveBeenCalledTimes(4); // 同条件命中缓存
+  });
+});
+
+describe("panelFiltersOf", () => {
+  const req = (url: string) => ({ url }) as never;
+
+  it("缺省时返回 {}", () => {
+    expect(panelFiltersOf(req("/__dsh-zentao__/overview?workspace=/ws/a"))).toEqual({});
+  });
+
+  it("解析并 URL 解码四个筛选参数", () => {
+    const url = `/x?workspace=/w&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}&bugBrowse=all&bugFilter=${encodeURIComponent("status=active")}`;
+    expect(panelFiltersOf(req(url))).toEqual({
+      taskBrowse: "all", taskFilter: "status=doing", bugBrowse: "all", bugFilter: "status=active",
+    });
+  });
+
+  it("非法字符返回 null", () => {
+    expect(panelFiltersOf(req(`/x?taskFilter=${encodeURIComponent("a=b; ls")}`))).toBeNull();
+    expect(panelFiltersOf(req(`/x?taskBrowse=${encodeURIComponent("all$(id)")}`))).toBeNull();
   });
 });
 

@@ -56,19 +56,35 @@ interface Queries {
 export const TASK_PANEL_FIELDS = "id,name,status,pri,deadline,assignedTo,assignedToRealName,openedBy,execution";
 export const BUG_PANEL_FIELDS = "id,title,status,pri,severity,deadline,assignedTo,assignedToRealName,openedBy";
 
+/** 面板状态筛选（经查询参数传入，白名单校验后拼入 CLI 参数）。 */
+export interface PanelFilters {
+  taskBrowse?: string;
+  taskFilter?: string;
+  bugBrowse?: string;
+  bugFilter?: string;
+}
+
 /**
  * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
- * - tasks: `task list --execution-id=<id> --fields=<面板列> --all`（execution 缺省 → 空数组 + note）
- * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> --all`
+ * - tasks: `task list --execution-id=<id> --fields=<面板列> [--browse-type/--filter] --all`（execution 缺省 → 空数组 + note）
+ * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> [--browse-type/--filter] --all`
  * 默认 run 解包 runZentao 的 {data, meta}，只取 data（面板暂不需要完整性元数据）。
  */
-export function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>): Queries {
+export function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>, filters: PanelFilters = {}): Queries {
   const runData = run ?? (async (args: string[]) => (await runZentao(args)).data);
+  const taskExtra = [
+    ...(filters.taskBrowse !== undefined ? [`--browse-type=${filters.taskBrowse}`] : []),
+    ...(filters.taskFilter !== undefined ? [`--filter=${filters.taskFilter}`] : []),
+  ];
+  const bugExtra = [
+    ...(filters.bugBrowse !== undefined ? [`--browse-type=${filters.bugBrowse}`] : []),
+    ...(filters.bugFilter !== undefined ? [`--filter=${filters.bugFilter}`] : []),
+  ];
   return {
     tasks: config.execution === undefined
       ? async () => []
       : async () => {
-          const args = ["task", "list", `--execution-id=${config.execution}`, `--fields=${TASK_PANEL_FIELDS}`, "--all"];
+          const args = ["task", "list", `--execution-id=${config.execution}`, `--fields=${TASK_PANEL_FIELDS}`, ...taskExtra, "--all"];
           // 集群负载均衡容错：若后端个别节点权限/会话异常回退到了其他 execution，自动重试命中正常节点
           for (let attempt = 0; attempt < 3; attempt++) {
             const res = await runData(args);
@@ -86,7 +102,7 @@ export function createQueries(config: WorkspaceConfig, run?: (args: string[]) =>
       const scope = bugScopeOf(config);
       return scope === null
         ? async () => []
-        : () => runData(["bug", "list", `${scope.flag}=${scope.value}`, `--fields=${BUG_PANEL_FIELDS}`, "--all"]);
+        : () => runData(["bug", "list", `${scope.flag}=${scope.value}`, `--fields=${BUG_PANEL_FIELDS}`, ...bugExtra, "--all"]);
     })(),
   };
 }
@@ -299,6 +315,36 @@ function workspaceOf(req: IncomingMessage): string | undefined {
   }
 }
 
+/** 筛选参数白名单（字母数字与 = , _ -），防异常字符进入 CLI 参数。 */
+const FILTER_PARAM_RE = /^[a-zA-Z0-9=,_-]{1,120}$/;
+
+/**
+ * 解析面板筛选参数（taskBrowse/taskFilter/bugBrowse/bugFilter）。
+ * 返回 null 表示存在非法参数（调用方应 400）；全部缺省返回 {}。
+ */
+export function panelFiltersOf(req: IncomingMessage): PanelFilters | null {
+  const url = req.url ?? "";
+  const out: Record<string, string> = {};
+  for (const name of ["taskBrowse", "taskFilter", "bugBrowse", "bugFilter"] as const) {
+    const match = new RegExp(`[?&]${name}=([^&]*)`).exec(url);
+    if (match === null || match[1] === undefined || match[1] === "") continue;
+    let value: string;
+    try {
+      value = decodeURIComponent(match[1]);
+    } catch {
+      return null;
+    }
+    if (!FILTER_PARAM_RE.test(value)) return null;
+    out[name] = value;
+  }
+  return out as PanelFilters;
+}
+
+/** 缓存键：工作区 + 筛选参数（不同筛选条件独立缓存）。 */
+function cacheKeyOf(workspace: string, filters: PanelFilters): string {
+  return [workspace, filters.taskBrowse ?? "", filters.taskFilter ?? "", filters.bugBrowse ?? "", filters.bugFilter ?? ""].join("|");
+}
+
 /**
  * GET /__dsh-zentao__/overview?workspace=<工作区绝对路径>[&fresh=1]：
  * 读该工作区的 .dsh-zentao.json，按配置拉取任务与 Bug。缓存按工作区分键
@@ -322,7 +368,7 @@ export function registerOverviewApi(ctx: Context, deps: {
   const readConfig = deps.readConfig ?? readWorkspaceConfig;
   const cache = new Map<string, { at: number; data: OverviewData }>();
   const inflight = new Map<string, Promise<OverviewData>>();
-  const compute = async (workspace: string): Promise<OverviewData> => {
+  const compute = async (workspace: string, filters: PanelFilters): Promise<OverviewData> => {
     const result = await readConfig(workspace);
     if (!result.ok) {
       return { tasks: [], bugs: [], error: `${WORKSPACE_CONFIG_FILENAME}：${result.error}` };
@@ -330,7 +376,7 @@ export function registerOverviewApi(ctx: Context, deps: {
     if (result.config === null) {
       return { tasks: [], bugs: [], unconfigured: true };
     }
-    return overviewData(result.config, createQueries(result.config, deps.run));
+    return overviewData(result.config, createQueries(result.config, deps.run, filters));
   };
   const dispose = webServer.register({
     kind: "exact",
@@ -345,9 +391,14 @@ export function registerOverviewApi(ctx: Context, deps: {
         sendJson(res, 400, { tasks: [], bugs: [], error: "缺少 workspace 查询参数（工作区绝对路径）" });
         return;
       }
+      const filters = panelFiltersOf(req);
+      if (filters === null) {
+        sendJson(res, 400, { tasks: [], bugs: [], error: "非法筛选参数（taskBrowse/taskFilter/bugBrowse/bugFilter 仅允许字母数字与 = , _ -）" });
+        return;
+      }
       try {
         const fresh = (req.url ?? "").includes("fresh=1");
-        const key = workspace;
+        const key = cacheKeyOf(workspace, filters);
         if (!fresh) {
           const hit = cache.get(key);
           if (hit !== undefined && Date.now() - hit.at < OVERVIEW_CACHE_TTL) {
@@ -357,7 +408,7 @@ export function registerOverviewApi(ctx: Context, deps: {
         }
         let pending = inflight.get(key);
         if (pending === undefined) {
-          pending = compute(workspace)
+          pending = compute(workspace, filters)
             .then((data) => {
               cache.set(key, { at: Date.now(), data });
               return data;
