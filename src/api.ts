@@ -590,8 +590,9 @@ export function registerDetailApi(ctx: Context, run: RunFn = runZentao): () => v
       }
       try {
         const module = VIEW_DEFS[view].module;
-        const result = await run([module, "get", String(id)]);
-        sendJson(res, 200, { view, id, data: result });
+        // runZentao 返回 {data, meta} 信封——解包 data（完整对象）
+        const result = await run([module, "get", String(id)]) as { data?: unknown };
+        sendJson(res, 200, { view, id, data: result.data });
       } catch (error) {
         sendJson(res, 200, { view, id, error: asCliError(error).message });
       }

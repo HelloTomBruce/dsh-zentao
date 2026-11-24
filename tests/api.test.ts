@@ -509,14 +509,16 @@ describe("registerDetailApi", () => {
     return registered[0];
   }
 
-  it("转发 <module> get <id> 并返回完整对象", async () => {
-    const run = vi.fn(async () => ({ id: 61, title: "需求A", spec: "<p>描述</p>" }));
+  it("转发 <module> get <id> 并解包 {data, meta} 信封返回完整对象", async () => {
+    const detail = { id: 61, title: "需求A", spec: "<p>描述</p>" };
+    const run = vi.fn(async () => ({ data: detail, meta: { resultObjectType: "story" } }));
     const res = fakeRes();
     await setup(run).handler(fakeReq("/__dsh-zentao__/detail?view=stories&id=61") as never, res as never);
     expect(run).toHaveBeenCalledWith(["story", "get", "61"]);
     const body = JSON.parse(res.body);
     expect(body.view).toBe("stories");
-    expect(body.data).toEqual({ id: 61, title: "需求A", spec: "<p>描述</p>" });
+    expect(body.data).toEqual(detail); // 解包后无双层嵌套
+    expect(body.data.meta).toBeUndefined();
   });
 
   it("testtask 无 get 子命令返回 unsupported（不调 CLI）", async () => {
