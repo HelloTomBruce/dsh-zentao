@@ -1,5 +1,12 @@
 node_modules/
+lib/
 *.tsbuildinfo
 # zentao 凭证（面板登录后由 CLI 写入，不入库）
 /zentao.json
 /.config/
+# 本地工具产物（非项目源码）
+.project/
+history/
+.artifact-server.json
+.artifact-server.log
+project/

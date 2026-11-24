@@ -38,7 +38,10 @@ function ensurePreloadScript(root: string = pluginRoot()): string | null {
       writeFileSync(p, PRELOAD_SOURCE.trim(), "utf8");
     }
     return p;
-  } catch {
+  } catch (error) {
+    // 写盘失败（如安装目录只读）不应静默——tab=project 上下文丢失会导致 tasks
+    // 视图行为在环境间不一致，这类问题极难排查
+    console.warn(`[dsh-zentao] preload 脚本写入失败（${error instanceof Error ? error.message : String(error)}），CLI 将缺少 tab=project 上下文`);
     return null;
   }
 }
@@ -81,18 +84,18 @@ const defaultExec: ExecFn = (cmd, args, cb) => {
   // 配置固定指向插件目录内的 zentao.json（唯一配置来源；登录也由面板发起、写入该文件）。
   // 注入 preload 脚本以在 CLI fetch 中默认带入 tab=project / app=project 上下文（对齐 Web 端 #app=project）。
   const preload = ensurePreloadScript();
-  const nodeOptions = [process.env.NODE_OPTIONS, preload ? `-r ${preload}` : null].filter(Boolean).join(" ").trim();
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ZENTAO_CONFIG_FILE: localConfigPath(pluginRoot()),
-    ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}),
   };
   // 优先使用插件依赖中的 zentao-cli，并以当前 node（process.execPath）直接执行
   // bin 脚本——不依赖 PATH 中的全局 zentao / node，消除宿主环境差异；解析不到
-  // 才回退到全局命令。
+  // 才回退到全局命令（此时无法注入 preload，全局安装场景请自行保证上下文）。
+  // preload 用 --require argv 注入而非 NODE_OPTIONS：后者按空白切分，安装路径
+  // 含空格时 preload 路径被撕裂导致 CLI 启动失败。
   const bundledBin = resolveBundledCliBin();
   const [runCmd, runArgs]: [string, string[]] = bundledBin
-    ? [process.execPath, [bundledBin, ...args]]
+    ? [process.execPath, preload ? ["--require", preload, bundledBin, ...args] : [bundledBin, ...args]]
     : [cmd, args];
   execFile(runCmd, runArgs, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024, env }, (error, stdout, stderr) => {
     // 部分命令（如 login）把错误 JSON 写到 stderr：stdout 为空时回退 stderr。
