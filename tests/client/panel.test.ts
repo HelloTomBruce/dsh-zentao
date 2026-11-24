@@ -112,3 +112,17 @@ describe("normalizeOverview（旧格式兼容垫片）", () => {
     expect(normalizeOverview("oops", "tasks")).toMatchObject({ error: "响应格式异常" });
   });
 });
+
+describe("sanitizeAndFormatHtml — fileID 查询参数形态（真实部署样本）", () => {
+  it("重写 index.php?m=file&f=read&fileID=<id> 相对路径为代理地址", () => {
+    const html = '<p>[结果]</p><img onload="setImageSize(this,0)" src="/zentao/zentao/index.php?m=file&amp;f=read&amp;t=png&amp;fileID=11870" alt="file-read-11870.png" />';
+    const out = sanitizeAndFormatHtml(html);
+    expect(out).toContain('src="/__dsh-zentao__/file?id=11870"');
+    expect(out).not.toContain("index.php");
+  });
+
+  it("未转义 & 的形态同样重写", () => {
+    const html = '<img src="/zentao/index.php?m=file&f=read&t=png&fileID=999" />';
+    expect(sanitizeAndFormatHtml(html)).toContain('src="/__dsh-zentao__/file?id=999"');
+  });
+});
