@@ -70,7 +70,8 @@ htmlToMarkdown=true                  # 富文本字段（desc/steps）转 Markdo
 - **CLI 作为运行时依赖**：`zentao-cli@0.5.0` 随插件安装（无需全局安装），插件以 `process.execPath` 直接执行其 bin 脚本，不依赖 PATH；配置固定为 dsh 用户目录的 `zentao.json`（`ZENTAO_CONFIG_FILE` 指向它），登录由面板发起、CLI 直接写入
 - **0.5.0 命令面适配**：显式 `list`/`get` 子命令；列表 `--all` 遍历全部页；写操作字段经 `--data` JSON 透传（camelCase 原样保留，数组字段如 `openedBuild` 直接给数组）；create 的 scope 字段（product/executionID/project）按模块映射为独立 flag（`--product-id` / `--product` / `--execution-id`，各模块异构）
 - **工作区绑定**：面板读取当前工作区根目录的 `.dsh-zentao.json`（产品/执行/项目 ID），服务端据此构造 `task list --execution-id` / `bug list --<scope>` 查询并用 `--fields` 裁剪到面板列；按工作区+筛选条件分键缓存 60s
-- **测试宿主包解析**：`@deepseek-ai/*` 不在 npm 依赖中——typecheck 走 tsconfig paths（兄弟仓库 `../deepseek-harness`），vitest 走 vitest.config.ts 的同名 alias（勿手工软链进 node_modules，会被 npm install 当 extraneous 清除）
+- **测试宿主包解析**：`@deepseek-ai/*` 不在 npm 依赖中——typecheck 走 tsconfig paths（兄弟仓库 `../deepseek-harness`），vitest 走 vitest.config.ts 的同名 alias
+- **link 开发运行时**：以 `dsh plugin add link:` 开发时，`lib/index.js` 从工作区真实路径加载，运行时 `import @deepseek-ai/dsh-tools`（tsdown external）需能解析到**正在运行的 dsh 宿主安装树**——执行 `node scripts/link-host-packages.mjs` 创建软链（指向全局 dsh 安装的 node_modules/@deepseek-ai，与宿主共享模块实例）；**npm install 会把这些软链当 extraneous 清除，装完依赖需重跑该脚本**
 - **客户端 React external**：`lib/client.js`（CJS closure-factory）保持 react/react-dom 外部引用，由宿主注入
 - **右侧栏 Tab 集成**：`dsh.client.inject` 声明 `@deepseek-ai/dsh-client-ui-sidebar-right`（运行时注入 `sidebarRight`/`sidebarRightTabs` 服务），本地 `ambient.d.ts` 补齐席位类型（本地 harness 源码暂无该包）
 - **构建**：tsdown（node 侧 ESM + 客户端 CJS），`npm run verify` = typecheck + test + build
