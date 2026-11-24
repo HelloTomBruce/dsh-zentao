@@ -239,7 +239,7 @@ export function DetailView({
           margin: 6px 0;
           cursor: zoom-in;
           display: block;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+          box-shadow: 0 1px 3px rgba(17,24,39,0.12);
           border: 1px solid ${T.border};
         }
         .dsh-zentao-desc p { margin: 4px 0; }
