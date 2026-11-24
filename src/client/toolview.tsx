@@ -7,9 +7,10 @@ import { createElement } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { ToolCallViewProps } from "@deepseek-ai/dsh-client-ui-tool/client";
 import { parseMeta, rowsToColumns, cellValue, statusLabel, type ColumnDef } from "./table.ts";
+import { T } from "./theme.ts";
 
 function cellStyle(kind: ColumnDef["type"]): Record<string, string> {
-  if (kind === "id") return { color: "var(--dsh-text-secondary, #6b7280)", fontVariantNumeric: "tabular-nums" };
+  if (kind === "id") return { color: T.textSecondary, fontVariantNumeric: "tabular-nums" };
   if (kind === "status") return { fontWeight: "600" };
   return {};
 }
@@ -57,7 +58,7 @@ function DetailView({ payload }: { payload: ObjectPayload }) {
   const cols = rowsToColumns(payload.data);
   return createElement(
     "div",
-    { style: { margin: "8px 0", border: "1px solid var(--dsh-border, #e3e6ea)", borderRadius: "8px", overflow: "hidden" } },
+    { style: { margin: "8px 0", border: `1px solid ${T.border}`, borderRadius: T.radiusSm, overflow: "hidden" } },
     ...cols.map((c) =>
       createElement("div", { key: c.key, style: detailRowStyle },
         createElement("span", { style: detailKeyStyle }, c.label),
@@ -67,27 +68,27 @@ function DetailView({ payload }: { payload: ObjectPayload }) {
 
 const tableStyle: CSSProperties = {
   width: "100%", borderCollapse: "collapse", fontSize: "13px",
-  border: "1px solid var(--dsh-border, #e3e6ea)", borderRadius: "8px",
+  border: `1px solid ${T.border}`, borderRadius: T.radiusSm,
 };
 const thStyle: CSSProperties = {
   textAlign: "left", padding: "6px 10px", fontWeight: "600",
-  borderBottom: "1px solid var(--dsh-border, #e3e6ea)",
-  color: "var(--dsh-text-secondary, #6b7280)", fontSize: "12px", whiteSpace: "nowrap",
+  borderBottom: `1px solid ${T.border}`,
+  color: T.textSecondary, fontSize: "12px", whiteSpace: "nowrap",
 };
 const tdStyle: CSSProperties = {
-  padding: "6px 10px", borderBottom: "1px solid var(--dsh-border, #e3e6ea)",
+  padding: "6px 10px", borderBottom: `1px solid ${T.border}`,
   maxWidth: "320px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
 };
 const emptyStyle: CSSProperties = {
-  margin: "8px 0", padding: "12px", color: "var(--dsh-text-secondary, #6b7280)", fontSize: "13px",
-  border: "1px dashed var(--dsh-border, #e3e6ea)", borderRadius: "8px", textAlign: "center",
+  margin: "8px 0", padding: "12px", color: T.textSecondary, fontSize: "13px",
+  border: `1px dashed ${T.border}`, borderRadius: T.radiusSm, textAlign: "center",
 };
 const detailRowStyle: CSSProperties = {
   display: "flex", gap: "12px", padding: "6px 10px",
-  borderBottom: "1px solid var(--dsh-border, #e3e6ea)",
+  borderBottom: `1px solid ${T.border}`,
 };
 const detailKeyStyle: CSSProperties = {
-  minWidth: "120px", color: "var(--dsh-text-secondary, #6b7280)", fontWeight: "600", fontSize: "12px",
+  minWidth: "120px", color: T.textSecondary, fontWeight: "600", fontSize: "12px",
 };
 const detailValueStyle: CSSProperties = { flex: "1", wordBreak: "break-all", fontSize: "13px" };
 

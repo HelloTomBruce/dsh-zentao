@@ -18,18 +18,22 @@ export const FILE_PATH = "/__dsh-zentao__/file";
 
 export interface OverviewRow {
   id: string | number;
-  /** 标题字段：任务行用 name，bug 行用 title（CLI 原样透传，两者都可能出现）。 */
+  /** 标题字段：任务行用 name，bug/需求/用例行用 title（CLI 原样透传，两者都可能出现）。 */
   name?: string;
   title?: string;
   status: string;
   [key: string]: unknown;
 }
 
-export interface OverviewData {
-  /** 执行下的任务（配置缺 execution 时为空）。 */
-  tasks: OverviewRow[];
-  /** 范围内的 Bug（product > project > execution 优先取一）。 */
-  bugs: OverviewRow[];
+/** 概览视图（TASK-009 起按视图懒加载；后续任务扩展 stories/testcases/testtasks）。 */
+export type OverviewView = "tasks" | "bugs";
+export const OVERVIEW_VIEWS: readonly OverviewView[] = ["tasks", "bugs"];
+
+export interface OverviewViewData {
+  /** 本次返回的视图。 */
+  view: OverviewView;
+  /** 该视图的数据行。 */
+  rows: OverviewRow[];
   /** 生效的工作区配置摘要（客户端展示绑定信息；未配置时缺省）。 */
   config?: WorkspaceConfig | undefined;
   /** 未配置工作区绑定（客户端显示引导态）。 */
@@ -41,11 +45,6 @@ export interface OverviewData {
   /** 提示信息（如"配置缺 execution，任务视图为空"）。 */
   note?: string | undefined;
   error?: string | undefined;
-}
-
-interface Queries {
-  tasks: () => Promise<unknown>;
-  bugs: () => Promise<unknown>;
 }
 
 /**
@@ -81,76 +80,99 @@ export async function fetchWithNodeRetry(run: () => Promise<unknown>, expectExec
 export const TASK_PANEL_FIELDS = "id,name,status,pri,deadline,assignedTo,assignedToRealName,openedBy,execution";
 export const BUG_PANEL_FIELDS = "id,title,status,pri,severity,deadline,assignedTo,assignedToRealName,openedBy";
 
-/** 面板状态筛选（经查询参数传入，白名单校验后拼入 CLI 参数）。 */
+/** 面板筛选（单视图作用域，经查询参数传入，白名单校验后拼入 CLI 参数）。 */
 export interface PanelFilters {
-  taskBrowse?: string;
-  taskFilter?: string;
-  taskSearch?: string;
-  bugBrowse?: string;
-  bugFilter?: string;
-  bugSearch?: string;
+  browse?: string;
+  filter?: string;
+  search?: string;
 }
 
 /** 概览查询的每页条数：默认 20 页大小会把大执行拖成上百页，200 显著减页数（实测 103→11 页、3x 提速）。 */
 const OVERVIEW_PAGE_SIZE = 200;
 
-/**
- * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
- * - tasks: `task list --execution-id=<id> --fields=<面板列> [--browse-type/--filter/--search] --page-size=200 --all`（execution 缺省 → 空数组 + note）
- * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> [--browse-type/--filter/--search] --page-size=200 --all`
- * 默认 run 解包 runZentao 的 {data, meta}，只取 data（面板暂不需要完整性元数据）。
- */
-export function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>, filters: PanelFilters = {}): Queries {
-  const runData = run ?? (async (args: string[]) => (await runZentao(args)).data);
-  const taskExtra = [
-    ...(filters.taskBrowse !== undefined ? [`--browse-type=${filters.taskBrowse}`] : []),
-    ...(filters.taskFilter !== undefined ? [`--filter=${filters.taskFilter}`] : []),
-    ...(filters.taskSearch !== undefined ? [`--search=${filters.taskSearch}`] : []),
-  ];
-  const bugExtra = [
-    ...(filters.bugBrowse !== undefined ? [`--browse-type=${filters.bugBrowse}`] : []),
-    ...(filters.bugFilter !== undefined ? [`--filter=${filters.bugFilter}`] : []),
-    ...(filters.bugSearch !== undefined ? [`--search=${filters.bugSearch}`] : []),
-  ];
-  return {
-    tasks: config.execution === undefined
-      ? async () => []
-      : async () => {
-          const args = ["task", "list", `--execution-id=${config.execution}`, `--fields=${TASK_PANEL_FIELDS}`, ...taskExtra, `--page-size=${OVERVIEW_PAGE_SIZE}`, "--all"];
-          return fetchWithNodeRetry(() => runData(args), config.execution);
-        },
-    bugs: (() => {
-      const scope = bugScopeOf(config);
-      return scope === null
-        ? async () => []
-        : () => fetchWithNodeRetry(() => runData(["bug", "list", `${scope.flag}=${scope.value}`, `--fields=${BUG_PANEL_FIELDS}`, ...bugExtra, `--page-size=${OVERVIEW_PAGE_SIZE}`, "--all"]));
-    })(),
-  };
+interface ViewDef {
+  /** CLI 模块名。 */
+  module: "task" | "bug";
+  /** --fields 裁剪列。 */
+  fields: string;
+  /** 由绑定配置生成 scope 参数；null = 该视图缺绑定（返回空 + note）。 */
+  scopeArgs: (config: WorkspaceConfig) => string[] | null;
+  /** scope 缺失时的提示。 */
+  missingNote: (filename: string) => string;
 }
 
-/** 聚合两次查询；单边失败时另一边仍返回，并透出首个错误信息。 */
-export async function overviewData(
+const VIEW_DEFS: Record<OverviewView, ViewDef> = {
+  tasks: {
+    module: "task",
+    fields: TASK_PANEL_FIELDS,
+    scopeArgs: (c) => (c.execution !== undefined ? [`--execution-id=${c.execution}`] : null),
+    missingNote: (f) => `配置缺 execution，任务视图为空（在 ${f} 中补充）`,
+  },
+  bugs: {
+    module: "bug",
+    fields: BUG_PANEL_FIELDS,
+    scopeArgs: (c) => {
+      const s = bugScopeOf(c);
+      return s === null ? null : [`${s.flag}=${s.value}`];
+    },
+    missingNote: (f) => `配置缺 product / project / execution，Bug 视图为空（在 ${f} 中补充）`,
+  },
+};
+
+export type ViewQueryFn = () => Promise<unknown>;
+
+/**
+ * 按工作区配置与视图构造单条 CLI 查询（zentao-cli ≥ 0.5.0 命令面）：
+ * `<module> list <scope> --fields=<面板列> [--browse-type/--filter/--search] --page-size=200 --all`
+ * 默认 run 解包 runZentao 的 {data, meta}，只取 data；scope 缺失返回 null（调用方给 note）。
+ */
+export function createViewQuery(
   config: WorkspaceConfig,
-  queries: Queries,
+  view: OverviewView,
+  filters: PanelFilters = {},
+  run?: (args: string[]) => Promise<unknown>,
+): ViewQueryFn | null {
+  const def = VIEW_DEFS[view];
+  const scope = def.scopeArgs(config);
+  if (scope === null) return null;
+  const runData = run ?? (async (args: string[]) => (await runZentao(args)).data);
+  const extra = [
+    ...(filters.browse !== undefined ? [`--browse-type=${filters.browse}`] : []),
+    ...(filters.filter !== undefined ? [`--filter=${filters.filter}`] : []),
+    ...(filters.search !== undefined ? [`--search=${filters.search}`] : []),
+  ];
+  const args = [def.module, "list", ...scope, `--fields=${def.fields}`, ...extra, `--page-size=${OVERVIEW_PAGE_SIZE}`, "--all"];
+  return view === "tasks"
+    ? () => fetchWithNodeRetry(() => runData(args), config.execution)
+    : () => fetchWithNodeRetry(() => runData(args));
+}
+
+/** 单视图查询聚合：失败透出错误信息，scope 缺失给 note。 */
+export async function overviewViewData(
+  config: WorkspaceConfig,
+  view: OverviewView,
+  query: ViewQueryFn | null,
   profileInfo: CurrentProfileInfo | null = readCurrentProfileInfo(),
-): Promise<OverviewData> {
-  const [tasks, bugs] = await Promise.allSettled([queries.tasks(), queries.bugs()]);
-  const firstError = [tasks, bugs]
-    .map((r) => (r.status === "rejected" ? (r.reason as Error).message : undefined))
-    .find((m) => m !== undefined);
-  const rows = (r: PromiseSettledResult<unknown>): OverviewRow[] =>
-    r.status === "fulfilled" && Array.isArray(r.value) ? (r.value as OverviewRow[]) : [];
-  return {
-    tasks: rows(tasks),
-    bugs: rows(bugs),
+): Promise<OverviewViewData> {
+  const def = VIEW_DEFS[view];
+  const base: OverviewViewData = {
+    view,
+    rows: [],
     config,
     ...(profileInfo ? {
       currentUser: { account: profileInfo.account, realname: profileInfo.realname },
       serverUrl: profileInfo.server,
     } : {}),
-    ...(config.execution === undefined ? { note: `配置缺 execution，任务视图为空（在 ${WORKSPACE_CONFIG_FILENAME} 中补充）` } : {}),
-    ...(firstError !== undefined ? { error: firstError } : {}),
   };
+  if (query === null) {
+    return { ...base, note: def.missingNote(WORKSPACE_CONFIG_FILENAME) };
+  }
+  try {
+    const result = await query();
+    return { ...base, rows: Array.isArray(result) ? (result as OverviewRow[]) : [] };
+  } catch (error) {
+    return { ...base, error: asCliError(error).message };
+  }
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -340,14 +362,14 @@ function workspaceOf(req: IncomingMessage): string | undefined {
 const FILTER_PARAM_RE = /^[a-zA-Z0-9=,_!-]{1,120}$/;
 
 /**
- * 解析面板筛选参数（taskBrowse/taskFilter/taskSearch/bugBrowse/bugFilter/bugSearch）。
+ * 解析面板筛选参数（browse/filter/search，单视图作用域）。
  * 返回 null 表示存在非法参数（调用方应 400）；全部缺省返回 {}。
  * search 允许任意非控字符（含中文），仅拒绝 - 开头（防 CLI flag 注入）与超长。
  */
 export function panelFiltersOf(req: IncomingMessage): PanelFilters | null {
   const url = req.url ?? "";
   const out: Record<string, string> = {};
-  for (const name of ["taskBrowse", "taskFilter", "taskSearch", "bugBrowse", "bugFilter", "bugSearch"] as const) {
+  for (const name of ["browse", "filter", "search"] as const) {
     const match = new RegExp(`[?&]${name}=([^&]*)`).exec(url);
     if (match === null || match[1] === undefined || match[1] === "") continue;
     let value: string;
@@ -356,7 +378,7 @@ export function panelFiltersOf(req: IncomingMessage): PanelFilters | null {
     } catch {
       return null;
     }
-    if (name.endsWith("Search")) {
+    if (name === "search") {
       const trimmed = value.trim();
       if (trimmed === "") continue;
       if (trimmed.length > 120 || trimmed.startsWith("-") || /[-~\x00-\x1f]/.test(trimmed)) return null;
@@ -369,19 +391,26 @@ export function panelFiltersOf(req: IncomingMessage): PanelFilters | null {
   return out as PanelFilters;
 }
 
-/** 缓存键：工作区 + 筛选参数（不同筛选条件独立缓存）。 */
-function cacheKeyOf(workspace: string, filters: PanelFilters): string {
+/** 解析视图参数：缺省 tasks；不在白名单返回 null（调用方 400）。 */
+export function overviewViewOf(req: IncomingMessage): OverviewView | null {
+  const match = /[?&]view=([^&]*)/.exec(req.url ?? "");
+  if (match === null || match[1] === undefined || match[1] === "") return "tasks";
+  const value = match[1];
+  return (OVERVIEW_VIEWS as readonly string[]).includes(value) ? (value as OverviewView) : null;
+}
+
+/** 缓存键：工作区 + 视图 + 筛选参数（不同视图/筛选条件独立缓存）。 */
+function cacheKeyOf(workspace: string, view: OverviewView, filters: PanelFilters): string {
   return [
-    workspace,
-    filters.taskBrowse ?? "", filters.taskFilter ?? "", filters.taskSearch ?? "",
-    filters.bugBrowse ?? "", filters.bugFilter ?? "", filters.bugSearch ?? "",
+    workspace, view,
+    filters.browse ?? "", filters.filter ?? "", filters.search ?? "",
   ].join("|");
 }
 
 /**
- * GET /__dsh-zentao__/overview?workspace=<工作区绝对路径>[&fresh=1]：
- * 读该工作区的 .dsh-zentao.json，按配置拉取任务与 Bug。缓存按工作区分键
- * （60s TTL + 并发去重）；fresh=1 强制刷新（登录后/手动刷新用）。
+ * GET /__dsh-zentao__/overview?workspace=<工作区绝对路径>[&view=tasks|bugs][&fresh=1]：
+ * 读该工作区的 .dsh-zentao.json，按配置拉取**单个视图**的数据（面板切 Tab 懒加载）。
+ * 缓存按 工作区+视图+筛选 分键（60s TTL + 并发去重）；fresh=1 强制刷新（登录后/手动刷新用）。
  */
 export function registerOverviewApi(ctx: Context, deps: {
   readConfig?: typeof readWorkspaceConfig;
@@ -399,17 +428,17 @@ export function registerOverviewApi(ctx: Context, deps: {
   }
 
   const readConfig = deps.readConfig ?? readWorkspaceConfig;
-  const cache = new Map<string, { at: number; data: OverviewData }>();
-  const inflight = new Map<string, Promise<OverviewData>>();
-  const compute = async (workspace: string, filters: PanelFilters): Promise<OverviewData> => {
+  const cache = new Map<string, { at: number; data: OverviewViewData }>();
+  const inflight = new Map<string, Promise<OverviewViewData>>();
+  const compute = async (workspace: string, view: OverviewView, filters: PanelFilters): Promise<OverviewViewData> => {
     const result = await readConfig(workspace);
     if (!result.ok) {
-      return { tasks: [], bugs: [], error: `${WORKSPACE_CONFIG_FILENAME}：${result.error}` };
+      return { view, rows: [], error: `${WORKSPACE_CONFIG_FILENAME}：${result.error}` };
     }
     if (result.config === null) {
-      return { tasks: [], bugs: [], unconfigured: true };
+      return { view, rows: [], unconfigured: true };
     }
-    return overviewData(result.config, createQueries(result.config, deps.run, filters));
+    return overviewViewData(result.config, view, createViewQuery(result.config, view, filters, deps.run));
   };
   const dispose = webServer.register({
     kind: "exact",
@@ -421,17 +450,22 @@ export function registerOverviewApi(ctx: Context, deps: {
       }
       const workspace = workspaceOf(req);
       if (workspace === undefined) {
-        sendJson(res, 400, { tasks: [], bugs: [], error: "缺少 workspace 查询参数（工作区绝对路径）" });
+        sendJson(res, 400, { error: "缺少 workspace 查询参数（工作区绝对路径）" });
+        return;
+      }
+      const view = overviewViewOf(req);
+      if (view === null) {
+        sendJson(res, 400, { error: `非法视图参数（可选：${OVERVIEW_VIEWS.join("/")}）` });
         return;
       }
       const filters = panelFiltersOf(req);
       if (filters === null) {
-        sendJson(res, 400, { tasks: [], bugs: [], error: "非法筛选参数（taskBrowse/taskFilter/bugBrowse/bugFilter 仅允许字母数字与 = , _ -）" });
+        sendJson(res, 400, { error: "非法筛选参数（browse/filter 仅允许字母数字与 = , _ - !；search 不得以 - 开头）" });
         return;
       }
       try {
         const fresh = (req.url ?? "").includes("fresh=1");
-        const key = cacheKeyOf(workspace, filters);
+        const key = cacheKeyOf(workspace, view, filters);
         if (!fresh) {
           const hit = cache.get(key);
           if (hit !== undefined && Date.now() - hit.at < OVERVIEW_CACHE_TTL) {
@@ -441,7 +475,7 @@ export function registerOverviewApi(ctx: Context, deps: {
         }
         let pending = inflight.get(key);
         if (pending === undefined) {
-          pending = compute(workspace, filters)
+          pending = compute(workspace, view, filters)
             .then((data) => {
               cache.set(key, { at: Date.now(), data });
               return data;
@@ -453,7 +487,7 @@ export function registerOverviewApi(ctx: Context, deps: {
         }
         sendJson(res, 200, await pending);
       } catch (error) {
-        sendJson(res, 200, { tasks: [], bugs: [], error: asCliError(error).message });
+        sendJson(res, 200, { view, rows: [], error: asCliError(error).message });
       }
     },
   });

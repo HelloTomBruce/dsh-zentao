@@ -3,136 +3,117 @@ import { EventEmitter } from "node:events";
 import {
   registerOverviewApi,
   registerLoginApi,
-  overviewData,
-  createQueries,
+  overviewViewData,
+  createViewQuery,
   buildLoginArgs,
   panelFiltersOf,
+  overviewViewOf,
   TASK_PANEL_FIELDS,
   BUG_PANEL_FIELDS,
 } from "../src/api.js";
 
-describe("createQueries", () => {
-  it("execution → task list --execution-id；product → bug list --product（优先级最高）", async () => {
-    const run = vi.fn(async (args: string[]) => (args[0] === "task" ? [] : []));
-    const queries = createQueries({ product: 2, execution: 168 }, run);
-    await Promise.all([queries.tasks(), queries.bugs()]);
+describe("createViewQuery（按视图构造单条 CLI 查询）", () => {
+  it("tasks：execution → task list --execution-id", async () => {
+    const run = vi.fn(async () => []);
+    const q = createViewQuery({ product: 2, execution: 168 }, "tasks", {}, run);
+    expect(q).not.toBeNull();
+    await q!();
     expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
   });
 
-  it("无 product 时 bug 范围按 project > execution 兜底", async () => {
+  it("bugs：product > project > execution 范围兜底", async () => {
     const run = vi.fn(async () => []);
-    await createQueries({ project: 5, execution: 168 }, run).bugs();
+    await createViewQuery({ product: 2, execution: 168 }, "bugs", {}, run)!();
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
+    await createViewQuery({ project: 5, execution: 168 }, "bugs", {}, run)!();
     expect(run).toHaveBeenCalledWith(["bug", "list", "--project=5", `--fields=${BUG_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
-    await createQueries({ execution: 168 }, run).bugs();
+    await createViewQuery({ execution: 168 }, "bugs", {}, run)!();
     expect(run).toHaveBeenCalledWith(["bug", "list", "--execution=168", `--fields=${BUG_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
   });
 
-  it("缺 execution 时任务查询为空（不调 CLI）", async () => {
+  it("scope 缺失返回 null（tasks 缺 execution / bugs 三全无）", () => {
     const run = vi.fn(async () => []);
-    const tasks = await createQueries({ product: 2 }, run).tasks();
-    expect(tasks).toEqual([]);
+    expect(createViewQuery({ product: 2 }, "tasks", {}, run)).toBeNull();
+    expect(createViewQuery({}, "bugs", {}, run)).toBeNull();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("筛选参数透传：browse/filter/search 拼入对应视图查询", async () => {
+    const run = vi.fn(async () => []);
+    await createViewQuery({ product: 2, execution: 168 }, "tasks", { browse: "all", filter: "status=doing", search: "登录" }, run)!();
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--browse-type=all", "--filter=status=doing", "--search=登录", `--page-size=200`, "--all"]);
+    await createViewQuery({ product: 2, execution: 168 }, "bugs", { filter: "status=active" }, run)!();
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, "--filter=status=active", `--page-size=200`, "--all"]);
   });
 
   it("当后端节点异常返回其他 execution 的回退数据时自动重试，命中正确 execution", async () => {
     let call = 0;
     const run = vi.fn(async () => {
       call++;
-      if (call === 1) {
-        // 第一次模拟命中异常节点：返回了回退到 169 的任务
-        return [{ id: 15320, execution: "169", name: "开发" }];
-      }
-      // 第二次重试命中正常节点：返回 execution 65 的任务
+      if (call === 1) return [{ id: 15320, execution: "169", name: "开发" }];
       return [{ id: 16561, execution: "65", name: "全量数据同步" }];
     });
-    const tasks = await createQueries({ execution: 65 }, run).tasks();
+    const tasks = await createViewQuery({ execution: 65 }, "tasks", {}, run)!();
     expect(run).toHaveBeenCalledTimes(2);
     expect(tasks).toEqual([{ id: 16561, execution: "65", name: "全量数据同步" }]);
   });
 
-  it("筛选参数透传：taskBrowse/taskFilter 拼入 task 查询，bugFilter 拼入 bug 查询", async () => {
-    const run = vi.fn(async () => []);
-    const queries = createQueries({ product: 2, execution: 168 }, run, {
-      taskBrowse: "all", taskFilter: "status=doing", bugFilter: "status=active",
-    });
-    await Promise.all([queries.tasks(), queries.bugs()]);
-    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--browse-type=all", "--filter=status=doing", `--page-size=200`, "--all"]);
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, "--filter=status=active", `--page-size=200`, "--all"]);
-  });
-
   it("「服务端分页未向前推进」瞬时错误自动重试（集群节点容错）", async () => {
     let taskCalls = 0;
-    const run = vi.fn(async (args: string[]) => {
-      if (args[0] === "task") {
-        taskCalls++;
-        if (taskCalls < 3) throw new Error("zentao: 禅道服务端返回错误（Url：，Status：）：服务端分页未向前推进");
-        return [{ id: 1, name: "T1", execution: "65" }];
-      }
-      return [];
+    const run = vi.fn(async () => {
+      taskCalls++;
+      if (taskCalls < 3) throw new Error("zentao: 禅道服务端返回错误（Url：，Status：）：服务端分页未向前推进");
+      return [{ id: 1, name: "T1", execution: "65" }];
     });
-    const tasks = await createQueries({ execution: 65 }, run).tasks();
+    const tasks = await createViewQuery({ execution: 65 }, "tasks", {}, run)!();
     expect(taskCalls).toBe(3);
     expect(tasks).toHaveLength(1);
   });
 
   it("分页错误重试 Bug 查询；非分页错误（如未登录）不重试", async () => {
-    // Bug 查询：分页错误也应重试
     let bugCalls = 0;
     const runRetry = vi.fn(async () => {
       bugCalls++;
       if (bugCalls === 1) throw new Error("zentao: 服务端分页未向前推进");
       return [{ id: 9, title: "B9" }];
     });
-    const bugs = await createQueries({ product: 2 }, runRetry as never).bugs();
+    const bugs = await createViewQuery({ product: 2 }, "bugs", {}, runRetry as never)!();
     expect(bugCalls).toBe(2);
     expect(bugs).toHaveLength(1);
 
-    // 非分页错误直接抛出（1006 未登录不值得重试）
     let authCalls = 0;
     const runAuth = vi.fn(async () => {
       authCalls++;
       throw new Error("zentao: 未找到可用的用户配置（1006）");
     });
-    await expect(createQueries({ product: 2 }, runAuth).bugs()).rejects.toThrow(/1006/);
+    await expect(createViewQuery({ product: 2 }, "bugs", {}, runAuth)!()).rejects.toThrow(/1006/);
     expect(authCalls).toBe(1);
   });
 });
 
-describe("overviewData", () => {
-  it("聚合任务与 Bug，带配置摘要", async () => {
-    const queries = {
-      tasks: vi.fn(async () => [
-        { id: 1, name: "任务A", status: "wait" },
-        { id: 2, name: "任务B", status: "doing" },
-      ]),
-      bugs: vi.fn(async () => [{ id: 1, title: "Bug1", status: "active" }]),
-    };
-    const data = await overviewData({ product: 2, execution: 168 }, queries);
-    expect(queries.tasks).toHaveBeenCalled();
-    expect(data.tasks).toHaveLength(2);
-    expect(data.bugs).toEqual([{ id: 1, title: "Bug1", status: "active" }]);
+describe("overviewViewData", () => {
+  it("聚合单视图行，带配置摘要与 view 标记", async () => {
+    const data = await overviewViewData({ product: 2, execution: 168 }, "tasks",
+      async () => [{ id: 1, name: "任务A", status: "wait" }, { id: 2, name: "任务B", status: "doing" }]);
+    expect(data.view).toBe("tasks");
+    expect(data.rows).toHaveLength(2);
     expect(data.config).toEqual({ product: 2, execution: 168 });
     expect(data.note).toBeUndefined();
     expect(data.error).toBeUndefined();
   });
 
-  it("缺 execution 时返回 note 提示", async () => {
-    const data = await overviewData({ product: 2 }, {
-      tasks: async () => [],
-      bugs: async () => [],
-    });
-    expect(data.tasks).toEqual([]);
+  it("query 为 null（scope 缺失）时返回空行 + note", async () => {
+    const data = await overviewViewData({ product: 2 }, "tasks", null);
+    expect(data.rows).toEqual([]);
     expect(data.note).toMatch(/execution/);
+    const bugData = await overviewViewData({}, "bugs", null);
+    expect(bugData.note).toMatch(/product/);
   });
 
-  it("查询失败时另一边仍返回，并透出错误信息", async () => {
-    const data = await overviewData({ product: 2, execution: 168 }, {
-      tasks: async () => { throw new Error("未登录"); },
-      bugs: async () => [{ id: 1, title: "Bug1", status: "active" }],
-    });
-    expect(data.tasks).toEqual([]);
-    expect(data.bugs).toHaveLength(1);
+  it("查询失败透出错误信息", async () => {
+    const data = await overviewViewData({ product: 2, execution: 168 }, "bugs",
+      async () => { throw new Error("未登录"); });
+    expect(data.rows).toEqual([]);
     expect(data.error).toMatch(/未登录/);
   });
 });
@@ -195,7 +176,6 @@ describe("registerOverviewApi", () => {
     };
     const dispose1 = registerOverviewApi(ctx as never);
     expect(exactMap.has("/__dsh-zentao__/overview")).toBe(true);
-    // 第二次注册前会安全清除旧路由，不抛 duplicate 错误
     const dispose2 = registerOverviewApi(ctx as never);
     expect(exactMap.has("/__dsh-zentao__/overview")).toBe(true);
     dispose2();
@@ -215,6 +195,13 @@ describe("registerOverviewApi", () => {
     expect(JSON.parse(res.body).error).toMatch(/workspace/);
   });
 
+  it("非法视图参数返回 400（白名单 tasks/bugs）", async () => {
+    const res = fakeRes();
+    await setup().handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa&view=nope"), res);
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/非法视图/);
+  });
+
   it("工作区未配置时返回 unconfigured 引导态", async () => {
     const res = fakeRes();
     await setup({ readConfig: async () => ({ ok: true, config: null }) })
@@ -229,33 +216,45 @@ describe("registerOverviewApi", () => {
     expect(JSON.parse(res.body).error).toMatch(/\.dsh-zentao\.json/);
   });
 
-  it("按配置查询任务与 Bug（workspace URL 解码）", async () => {
+  it("按视图懒加载：view=tasks 只查 task，view=bugs 只查 bug（默认 tasks）", async () => {
     const run = vi.fn(async (args: string[]) =>
       args[0] === "task" ? [{ id: 1, name: "T1", status: "doing" }] : [{ id: 9, title: "B9", status: "active" }]);
-    const res = fakeRes();
-    await setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run })
-      .handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa"), res);
+    const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run });
+    // 默认视图（无 view 参数）= tasks：只应调 task 查询
+    const res1 = fakeRes();
+    await route.handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa"), res1);
     expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
+    expect(run).toHaveBeenCalledTimes(1);
+    const body1 = JSON.parse(res1.body);
+    expect(body1.view).toBe("tasks");
+    expect(body1.rows).toHaveLength(1);
+    // view=bugs：只应调 bug 查询
+    const res2 = fakeRes();
+    await route.handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa&view=bugs"), res2);
     expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
-    const body = JSON.parse(res.body);
-    expect(body.tasks).toHaveLength(1);
-    expect(body.bugs).toHaveLength(1);
-    expect(body.config).toEqual({ product: 2, execution: 168 });
+    expect(run).toHaveBeenCalledTimes(2);
+    const body2 = JSON.parse(res2.body);
+    expect(body2.view).toBe("bugs");
+    expect(body2.rows[0]).toEqual({ id: 9, title: "B9", status: "active" });
   });
 
-  it("60s 内同工作区命中缓存（run 只调一次），不同工作区独立查询", async () => {
+  it("60s 内同 工作区+视图+筛选 命中缓存；视图切换独立缓存", async () => {
     const run = vi.fn(async () => []);
     const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run });
-    const hit = async (ws: string) => {
+    const hit = async (suffix: string) => {
       const res = fakeRes();
-      await route.handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=${encodeURIComponent(ws)}`), res);
+      await route.handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa${suffix}`), res);
       return res;
     };
-    await hit("/ws/a");
-    await hit("/ws/a");
-    expect(run).toHaveBeenCalledTimes(2); // task + bug 各一次，缓存生效
-    await hit("/ws/b");
-    expect(run).toHaveBeenCalledTimes(4);
+    await hit("");           // tasks 查询 1 次
+    await hit("");           // 命中缓存
+    expect(run).toHaveBeenCalledTimes(1);
+    await hit("&view=bugs"); // bugs 视图 → 新缓存键，再查 1 次
+    expect(run).toHaveBeenCalledTimes(2);
+    await hit("&view=bugs"); // 命中缓存
+    expect(run).toHaveBeenCalledTimes(2);
+    await hit(`&filter=${encodeURIComponent("status=doing")}`); // tasks 新筛选 → 再查
+    expect(run).toHaveBeenCalledTimes(3);
   });
 
   it("fresh=1 绕过缓存强制重查", async () => {
@@ -268,42 +267,38 @@ describe("registerOverviewApi", () => {
     };
     await call(false);
     await call(false);
-    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledTimes(1);
     await call(true);
-    expect(run).toHaveBeenCalledTimes(4);
+    expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it("筛选参数透传到 CLI 查询（taskFilter 经 URL 编码）", async () => {
+  it("筛选参数透传到 CLI 查询（filter 经 URL 编码）", async () => {
     const run = vi.fn(async () => []);
     const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run });
     const res = fakeRes();
-    await route.handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}`), res);
+    await route.handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa&browse=all&filter=${encodeURIComponent("status=doing")}`), res);
     expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--browse-type=all", "--filter=status=doing", `--page-size=200`, "--all"]);
     expect(res.status).toBe(200);
   });
 
   it("非法筛选参数返回 400（白名单校验）", async () => {
     const res = fakeRes();
-    await setup().handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa&taskFilter=${encodeURIComponent("status=doing; rm -rf /")}`), res);
+    await setup().handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa&filter=${encodeURIComponent("status=doing; rm -rf /")}`), res);
     expect(res.status).toBe(400);
     expect(JSON.parse(res.body).error).toMatch(/非法筛选参数/);
   });
+});
 
-  it("不同筛选条件独立缓存（同工作区不同筛选各查一次）", async () => {
-    const run = vi.fn(async () => []);
-    const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run });
-    const hit = async (suffix: string) => {
-      const res = fakeRes();
-      await route.handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa${suffix}`), res);
-      return res;
-    };
-    await hit("");
-    await hit("");
-    expect(run).toHaveBeenCalledTimes(2);
-    await hit(`&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}`);
-    expect(run).toHaveBeenCalledTimes(4); // 新筛选条件 → 缓存未命中，重新查询
-    await hit(`&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}`);
-    expect(run).toHaveBeenCalledTimes(4); // 同条件命中缓存
+describe("overviewViewOf", () => {
+  const req = (url: string) => ({ url }) as never;
+
+  it("缺省为 tasks", () => {
+    expect(overviewViewOf(req("/x?workspace=/ws/a"))).toBe("tasks");
+  });
+
+  it("合法视图透传，非法返回 null", () => {
+    expect(overviewViewOf(req("/x?view=bugs"))).toBe("bugs");
+    expect(overviewViewOf(req("/x?view=nope"))).toBeNull();
   });
 });
 
@@ -314,22 +309,19 @@ describe("panelFiltersOf", () => {
     expect(panelFiltersOf(req("/__dsh-zentao__/overview?workspace=/ws/a"))).toEqual({});
   });
 
-  it("解析并 URL 解码全部筛选参数（含 search）", () => {
-    const url = `/x?workspace=/w&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}&taskSearch=${encodeURIComponent("登录")}&bugBrowse=all&bugFilter=${encodeURIComponent("status=active")}&bugSearch=${encodeURIComponent("崩溃")}`;
-    expect(panelFiltersOf(req(url))).toEqual({
-      taskBrowse: "all", taskFilter: "status=doing", taskSearch: "登录",
-      bugBrowse: "all", bugFilter: "status=active", bugSearch: "崩溃",
-    });
+  it("解析并 URL 解码 browse/filter/search", () => {
+    const url = `/x?workspace=/w&browse=all&filter=${encodeURIComponent("status=doing")}&search=${encodeURIComponent("登录")}`;
+    expect(panelFiltersOf(req(url))).toEqual({ browse: "all", filter: "status=doing", search: "登录" });
   });
 
   it("search 允许中文但拒绝 - 开头（防 CLI flag 注入）", () => {
-    expect(panelFiltersOf(req(`/x?taskSearch=${encodeURIComponent("--format=raw")}`))).toBeNull();
-    expect(panelFiltersOf(req(`/x?taskSearch=${encodeURIComponent("正常关键词")}`))).toEqual({ taskSearch: "正常关键词" });
+    expect(panelFiltersOf(req(`/x?search=${encodeURIComponent("--format=raw")}`))).toBeNull();
+    expect(panelFiltersOf(req(`/x?search=${encodeURIComponent("正常关键词")}`))).toEqual({ search: "正常关键词" });
   });
 
   it("非法字符返回 null", () => {
-    expect(panelFiltersOf(req(`/x?taskFilter=${encodeURIComponent("a=b; ls")}`))).toBeNull();
-    expect(panelFiltersOf(req(`/x?taskBrowse=${encodeURIComponent("all$(id)")}`))).toBeNull();
+    expect(panelFiltersOf(req(`/x?filter=${encodeURIComponent("a=b; ls")}`))).toBeNull();
+    expect(panelFiltersOf(req(`/x?browse=${encodeURIComponent("all$(id)")}`))).toBeNull();
   });
 });
 

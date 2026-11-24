@@ -8,7 +8,7 @@
 import { createElement, useEffect, useState } from "react";
 import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import type { OverviewResponse, PanelTab, TabFilterState } from "./overview.ts";
-import { buildOverviewQuery, defaultTabFilter, FILTER_OPTIONS, overviewSummary, PRI_OPTIONS, SEVERITY_OPTIONS } from "./overview.ts";
+import { buildOverviewQuery, defaultTabFilter, FILTER_OPTIONS, openRowCount, PRI_OPTIONS, SEVERITY_OPTIONS } from "./overview.ts";
 import { useActiveWorkspace } from "./workspace.ts";
 import { ZentaoTabIcon } from "./icons.tsx";
 import { T } from "./theme.ts";
@@ -18,7 +18,7 @@ const LOGIN_URL = "/__dsh-zentao__/login";
 const CONFIG_FILENAME = ".dsh-zentao.json";
 const CONFIG_SAMPLE = '{ "product": 2, "execution": 168 }';
 
-function useOverview(workspacePath: string, filterQuery: string): { data: OverviewResponse | null; refresh: () => void; loading: boolean } {
+function useOverview(workspacePath: string, view: PanelTab, filterQuery: string): { data: OverviewResponse | null; refresh: () => void; loading: boolean } {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [tick, setTick] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -27,21 +27,21 @@ function useOverview(workspacePath: string, filterQuery: string): { data: Overvi
     let alive = true;
     setLoading(true);
     // 首次挂载走服务端 60s 缓存（秒开）；显式 refresh（登录后）强制刷新。
-    // 筛选条件经 filterQuery 进缓存键，切换筛选即自动拉取对应数据。
+    // 按视图懒加载：切 Tab 换 view 即拉对应视图（服务端按 工作区+视图+筛选 缓存）。
     const url = tick === 0
-      ? `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&${filterQuery}`
-      : `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&${filterQuery}&fresh=1`;
+      ? `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}&${filterQuery}`
+      : `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}&${filterQuery}&fresh=1`;
     fetch(url, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() as Promise<OverviewResponse> : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d) => { if (alive) setData(d); })
       .catch((err: unknown) => {
         if (!alive) return;
         const message = err instanceof Error && /^HTTP /.test(err.message) ? err.message : "网络错误";
-        setData({ tasks: [], bugs: [], error: message });
+        setData({ view, rows: [], error: message });
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [tick, workspacePath, filterQuery]);
+  }, [tick, workspacePath, view, filterQuery]);
   return { data, refresh: () => setTick((t) => t + 1), loading };
 }
 
@@ -137,14 +137,14 @@ export function sanitizeAndFormatHtml(text: string): string {
         const trimmed = p.trim();
         if (!trimmed) return "";
         const formatted = trimmed
-          .replace(/\[(步骤|结果|期望|其它|其他)\]/g, `<strong style="color: var(--dsw-alias-state-business-primary, #2563eb); display: block; margin: 6px 0 2px 0;">[$1]</strong>`)
+          .replace(/\[(步骤|结果|期望|其它|其他)\]/g, `<strong style="color: ${T.accent}; display: block; margin: 6px 0 2px 0;">[$1]</strong>`)
           .replace(/\r?\n/g, "<br />");
         return `<p style="margin: 4px 0;">${formatted}</p>`;
       })
       .filter(Boolean)
       .join("");
   } else {
-    s = s.replace(/\[(步骤|结果|期望|其它|其他)\]/g, `<strong style="color: var(--dsw-alias-state-business-primary, #2563eb); display: block; margin: 6px 0 2px 0;">[$1]</strong>`);
+    s = s.replace(/\[(步骤|结果|期望|其它|其他)\]/g, `<strong style="color: ${T.accent}; display: block; margin: 6px 0 2px 0;">[$1]</strong>`);
   }
 
   return s;
@@ -226,7 +226,7 @@ function DetailView({
           cursor: zoom-in;
           display: block;
           box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-          border: 1px solid var(--dsw-alias-border-l2, #e3e6ea);
+          border: 1px solid ${T.border};
         }
         .dsh-zentao-desc p { margin: 4px 0; }
       `),
@@ -303,7 +303,7 @@ function RowList({
           createElement("span", null, `👤 ${assigned}`),
           deadline && createElement("span", null, `📅 ${deadline}`),
           metaExtra && createElement("span", null, isTask ? `⏱️ ${metaExtra}` : `🔥 ${metaExtra}`),
-          createElement("span", { style: { marginLeft: "auto", color: "var(--dsw-alias-state-business-primary, #2f6fed)", fontSize: "11px" } }, "详情 →"),
+          createElement("span", { style: { marginLeft: "auto", color: T.accent, fontSize: "11px" } }, "详情 →"),
         ),
       );
     }),
@@ -324,21 +324,21 @@ function RowList({
 }
 
 const sectionTitleStyle: CSSProperties = {
-  fontSize: "12px", fontWeight: "600", color: "var(--dsw-alias-label-secondary, #6b7280)",
+  fontSize: "12px", fontWeight: "600", color: T.textSecondary,
   marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.04em",
 };
 const emptyStyle: CSSProperties = {
-  padding: "10px", color: "var(--dsw-alias-label-secondary, #6b7280)", fontSize: "13px",
-  border: "1px dashed var(--dsw-alias-border-l2, #e3e6ea)", borderRadius: "6px", textAlign: "center",
+  padding: "10px", color: T.textSecondary, fontSize: "13px",
+  border: `1px dashed ${T.border}`, borderRadius: "6px", textAlign: "center",
 };
 const hintStyle: CSSProperties = {
-  fontSize: "12px", color: "var(--dsw-alias-label-secondary, #6b7280)",
+  fontSize: "12px", color: T.textSecondary,
   whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.6,
 };
 const codeStyle: CSSProperties = {
   display: "block", margin: "6px 0", padding: "8px 10px",
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: "12px",
-  background: "var(--dsw-alias-bg-layer-2, #f5f6f8)", border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
+  background: T.surfaceMuted, border: `1px solid ${T.border}`,
   borderRadius: "6px", whiteSpace: "pre-wrap", wordBreak: "break-all",
 };
 
@@ -408,40 +408,40 @@ function LoginForm({ onLoggedIn, onClose }: { onLoggedIn: () => void; onClose?: 
 
 const loginFieldStyle: CSSProperties = { display: "block", marginBottom: "8px" };
 const loginLabelStyle: CSSProperties = {
-  display: "block", fontSize: "12px", color: "var(--dsw-alias-label-secondary, #6b7280)", marginBottom: "3px",
+  display: "block", fontSize: "12px", color: T.textSecondary, marginBottom: "3px",
 };
 const loginInputStyle: CSSProperties = {
   width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: "13px",
-  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)", borderRadius: "6px",
-  background: "var(--dsw-alias-bg-layer-1, #fff)", color: "inherit",
+  border: `1px solid ${T.border}`, borderRadius: "6px",
+  background: T.surface, color: "inherit",
 };
 const loginErrorStyle: CSSProperties = {
-  fontSize: "12px", color: "var(--dsw-alias-state-error-primary, #dc2626)", margin: "4px 0 8px",
+  fontSize: "12px", color: T.danger, margin: "4px 0 8px",
   whiteSpace: "pre-wrap", wordBreak: "break-all",
 };
 
 /** 登录成功提示：绿色对勾文案，明确告知后续行为。 */
 const loginSuccessStyle: CSSProperties = {
-  fontSize: "12px", color: "var(--dsw-alias-state-success-primary, #16a34a)", margin: "4px 0 10px", fontWeight: 600,
+  fontSize: "12px", color: T.success, margin: "4px 0 10px", fontWeight: 600,
 };
 const loginSubmitStyle = (pending: boolean): CSSProperties => ({
   width: "100%", padding: "7px 0", fontSize: "13px", fontWeight: "600",
   border: "none", borderRadius: "6px", cursor: pending ? "default" : "pointer",
-  background: "var(--dsw-alias-state-business-primary, #2f6fed)", color: "#fff", opacity: pending ? 0.7 : 1,
+  background: T.accent, color: "#fff", opacity: pending ? 0.7 : 1,
 });
 
 type TabKey = "tasks" | "bugs";
 
-/** Tab 标题栏：图标 + 标题 + 未关闭 Bug 计数徽标（默认筛选，数据走服务端 60s 缓存）。 */
+/** Tab 标题栏：图标 + 标题 + 未关闭 Bug 计数徽标（默认未关闭筛选，数据走服务端 60s 缓存）。 */
 export function ZentaoPanelTitle() {
   const workspace = useActiveWorkspace();
-  const { data } = useOverview(workspace.path, buildOverviewQuery(defaultTabFilter("tasks"), defaultTabFilter("bugs")));
-  const summary = data === null ? null : overviewSummary(data);
+  const { data } = useOverview(workspace.path, "bugs", buildOverviewQuery("bugs", defaultTabFilter("bugs")));
+  const openBugs = data !== null && data.view === "bugs" && data.error === undefined ? openRowCount(data.rows) : 0;
   return createElement("span", { style: titleWrapperStyle },
     createElement(ZentaoTabIcon, { style: { marginRight: 6 } }),
     createElement("span", null, "禅道概览"),
-    summary !== null && summary.openBugs > 0 &&
-      createElement("span", { style: countBadgeStyle, title: "未关闭 Bug" }, String(summary.openBugs)),
+    openBugs > 0 &&
+      createElement("span", { style: countBadgeStyle, title: "未关闭 Bug" }, String(openBugs)),
   );
 }
 
@@ -451,7 +451,7 @@ const titleWrapperStyle: CSSProperties = {
 const countBadgeStyle: CSSProperties = {
   marginLeft: 6, padding: "0 6px", borderRadius: 999,
   fontSize: 11, fontWeight: 600, lineHeight: "16px",
-  background: "var(--dsw-alias-state-business-primary, #2f6fed)", color: "#fff",
+  background: T.accent, color: "#fff",
 };
 
 /** 未配置工作区绑定的引导态：文件路径 + 格式示例。 */
@@ -531,7 +531,7 @@ function SkeletonRows({ rows, tab, filterBar = true }: { rows: number; tab: TabK
   );
 }
 
-/** Tab 正文：按工作区绑定展示 任务 / Bug 两视图 + 状态筛选 + 详情查看 + 登录入口。 */
+/** Tab 正文：按工作区绑定展示各视图（按视图懒加载：切 Tab 才拉对应数据）+ 状态筛选 + 详情查看 + 登录入口。 */
 export function ZentaoPanelBody() {
   const workspace = useActiveWorkspace();
   const [showLogin, setShowLogin] = useState(false);
@@ -544,8 +544,15 @@ export function ZentaoPanelBody() {
     tasks: defaultTabFilter("tasks"),
     bugs: defaultTabFilter("bugs"),
   });
-  const filterQuery = buildOverviewQuery(filterSel.tasks, filterSel.bugs);
-  const { data, refresh, loading } = useOverview(workspace.path, filterQuery);
+  const filterQuery = buildOverviewQuery(tab, filterSel[tab]);
+  const { data, refresh, loading } = useOverview(workspace.path, tab, filterQuery);
+  // 各视图行数（该视图加载后才知道；Tab 标签按需展示）
+  const [counts, setCounts] = useState<Partial<Record<PanelTab, number>>>({});
+  useEffect(() => {
+    if (data !== null && data.view === tab && data.error === undefined && data.unconfigured !== true) {
+      setCounts((c) => (c[tab] === data.rows.length ? c : { ...c, [tab]: data.rows.length }));
+    }
+  }, [data, tab]);
   // 筛选切换中的列表骨架态：改动筛选即置位，新数据到达（loading 结束）自动清除
   const [switching, setSwitching] = useState(false);
   useEffect(() => { if (!loading) setSwitching(false); }, [loading]);
@@ -555,6 +562,8 @@ export function ZentaoPanelBody() {
     setSelectedRow(null);
     setPage(1);
   };
+  // 当前视图的数据（切 Tab 途中旧数据属于上一视图，视为加载中 → 骨架屏）
+  const viewData = data !== null && data.view === tab ? data : null;
 
   if (workspace.path === "") {
     return createElement("div", { style: paneWrapperStyle },
@@ -562,12 +571,12 @@ export function ZentaoPanelBody() {
       createElement("div", { style: { height: "10px" } }),
       createElement("button", { onClick: workspace.refresh, style: reloginLinkStyle }, "重试"));
   }
-  if (data === null) return createElement("div", { style: paneWrapperStyle },
+  if (viewData === null) return createElement("div", { style: paneWrapperStyle },
     createElement(SkeletonRows, { rows: 6, tab }));
-  if (data.unconfigured === true) return createElement(UnconfiguredGuide, { workspace, onRefresh: refresh });
-  if (data.error !== undefined) {
+  if (viewData.unconfigured === true) return createElement(UnconfiguredGuide, { workspace, onRefresh: refresh });
+  if (viewData.error !== undefined) {
     return createElement("div", { style: paneWrapperStyle },
-      createElement("div", { style: emptyStyle }, `禅道数据获取失败：${data.error}`),
+      createElement("div", { style: emptyStyle }, `禅道数据获取失败：${viewData.error}`),
       loading && createElement("div", { style: hintStyle }, "正在刷新数据（数据量较大时约需几秒）…"),
       createElement("div", { style: { height: "10px" } }),
       createElement("button", { onClick: refresh, style: reloginLinkStyle }, "重试刷新"),
@@ -576,25 +585,25 @@ export function ZentaoPanelBody() {
     );
   }
 
-  const myAccount = data.currentUser?.account ?? "zhangyingwu";
-  const myRealname = data.currentUser?.realname ?? "张盈武";
+  const myAccount = viewData.currentUser?.account ?? "zhangyingwu";
+  const myRealname = viewData.currentUser?.realname ?? "张盈武";
   const isMine = (r: Record<string, unknown>) =>
     (myAccount && (r.assignedTo === myAccount || r.openedBy === myAccount)) ||
     (myRealname && (r.assignedToRealName === myRealname || r.openedBy === myRealname));
 
-  const rawList = tab === "tasks" ? data.tasks : data.bugs;
+  const rawList = viewData.rows;
   const mineCount = (rawList as Array<Record<string, unknown>>).filter(isMine).length;
   const displayRows = onlyMine
     ? (rawList as Array<Record<string, unknown>>).filter(isMine)
     : (rawList as Array<Record<string, unknown>>);
 
   const tabs: { key: TabKey; label: string }[] = [
-    { key: "tasks", label: `任务（${data.tasks.length}）` },
-    { key: "bugs", label: `Bug（${data.bugs.length}）` },
+    { key: "tasks", label: `任务${counts.tasks !== undefined ? `（${counts.tasks}）` : ""}` },
+    { key: "bugs", label: `Bug${counts.bugs !== undefined ? `（${counts.bugs}）` : ""}` },
   ];
 
   return createElement("div", { style: paneWrapperStyle },
-    data.note !== undefined && createElement("div", { style: hintStyle, key: "note" }, data.note),
+    viewData.note !== undefined && createElement("div", { style: hintStyle, key: "note" }, viewData.note),
     // 顶部分类切换（任务 / Bug）
     createElement("div", { style: tabBarStyle, role: "tablist", "aria-label": "禅道概览分类" },
       ...tabs.map((t) =>
@@ -611,7 +620,7 @@ export function ZentaoPanelBody() {
       ? createElement(DetailView, {
           row: selectedRow,
           type: tab,
-          serverUrl: data.serverUrl,
+          serverUrl: viewData.serverUrl,
           onBack: () => setSelectedRow(null),
         })
       : createElement("div", { role: "tabpanel", style: { minHeight: "120px" } },
@@ -685,7 +694,7 @@ export function ZentaoPanelBody() {
       : createElement("div", { style: { display: "flex", gap: "12px", alignItems: "center" } },
           createElement("button", { onClick: refresh, style: reloginLinkStyle }, "刷新数据"),
           loading && createElement("span", { style: hintStyle }, "刷新中…"),
-          createElement("span", { style: { color: "var(--dsw-alias-border-l2, #e3e6ea)", fontSize: "12px" } }, "|"),
+          createElement("span", { style: { color: T.borderSubtle, fontSize: "12px" } }, "|"),
           createElement("button", { onClick: () => setShowLogin(true), style: reloginLinkStyle }, "重新登录 / 切换账号")),
   );
 }
@@ -697,20 +706,20 @@ const paneWrapperStyle: CSSProperties = {
 
 const tabBarStyle: CSSProperties = {
   display: "flex", gap: "4px", marginBottom: "10px",
-  borderBottom: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
+  borderBottom: `1px solid ${T.border}`,
 };
 const tabStyle = (active: boolean): CSSProperties => ({
   border: "none", background: "transparent", cursor: "pointer",
   padding: "6px 10px", fontSize: "13px",
   fontWeight: active ? "600" : "400",
-  color: active ? "var(--dsw-alias-state-business-primary, #2f6fed)" : "var(--dsw-alias-label-secondary, #6b7280)",
-  borderBottom: active ? "2px solid var(--dsw-alias-state-business-primary, #2f6fed)" : "2px solid transparent",
+  color: active ? T.accent : T.textSecondary,
+  borderBottom: active ? `2px solid ${T.accent}` : "2px solid transparent",
   marginBottom: "-1px",
 });
 
 const reloginLinkStyle: CSSProperties = {
   border: "none", background: "transparent", cursor: "pointer", padding: "0",
-  fontSize: "12px", color: "var(--dsw-alias-label-secondary, #6b7280)", textDecoration: "underline",
+  fontSize: "12px", color: T.textSecondary, textDecoration: "underline",
 };
 
 const filterBarStyle: CSSProperties = {
@@ -770,13 +779,13 @@ const filterSearchStyle: CSSProperties = {
 
 const userTagStyle: CSSProperties = {
   fontSize: "11px",
-  color: "var(--dsw-alias-label-secondary, #6b7280)",
+  color: T.textSecondary,
 };
 
 const rowCardStyle: CSSProperties = {
   padding: "8px 10px",
-  background: "var(--dsw-alias-bg-layer-1, #fff)",
-  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
+  background: T.surface,
+  border: `1px solid ${T.border}`,
   borderRadius: "6px",
   cursor: "pointer",
   display: "flex",
@@ -788,7 +797,7 @@ const rowCardStyle: CSSProperties = {
 const rowTitleStyle: CSSProperties = {
   fontSize: "13px",
   fontWeight: "600",
-  color: "var(--dsw-alias-label-primary, #1f2937)",
+  color: T.text,
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
@@ -800,32 +809,32 @@ const rowMetaStyle: CSSProperties = {
   alignItems: "center",
   gap: "10px",
   fontSize: "11px",
-  color: "var(--dsw-alias-label-secondary, #6b7280)",
+  color: T.textSecondary,
 };
 
 const idTagStyle: CSSProperties = {
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
   fontSize: "11px",
-  color: "var(--dsw-alias-label-secondary, #6b7280)",
-  background: "var(--dsw-alias-bg-layer-2, #f3f4f6)",
+  color: T.textSecondary,
+  background: T.surfaceMuted,
   padding: "1px 4px",
   borderRadius: "3px",
   flexShrink: 0,
 };
 
 const backBtnStyle: CSSProperties = {
-  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
-  background: "var(--dsw-alias-bg-layer-1, #fff)",
-  color: "var(--dsw-alias-label-primary, #1f2937)",
+  border: `1px solid ${T.border}`,
+  background: T.surface,
+  color: T.text,
   cursor: "pointer",
   padding: "4px 8px",
   fontSize: "12px",
-  borderRadius: "4px",
+  borderRadius: T.radiusXs,
 };
 
 const openLinkStyle: CSSProperties = {
   fontSize: "12px",
-  color: "var(--dsw-alias-state-business-primary, #2f6fed)",
+  color: T.accent,
   textDecoration: "none",
   fontWeight: "500",
 };
@@ -834,7 +843,7 @@ const detailTitleStyle: CSSProperties = {
   fontSize: "14px",
   fontWeight: "700",
   lineHeight: 1.4,
-  color: "var(--dsw-alias-label-primary, #1f2937)",
+  color: T.text,
   userSelect: "text",
 };
 
@@ -843,9 +852,9 @@ const gridStyle: CSSProperties = {
   gridTemplateColumns: "1fr 1fr",
   gap: "8px",
   padding: "10px",
-  background: "var(--dsw-alias-bg-layer-2, #f9fafb)",
+  background: T.surfaceMuted,
   borderRadius: "6px",
-  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
+  border: `1px solid ${T.border}`,
 };
 
 const fieldItemStyle: CSSProperties = {
@@ -856,24 +865,24 @@ const fieldItemStyle: CSSProperties = {
 
 const fieldLabelStyle: CSSProperties = {
   fontSize: "11px",
-  color: "var(--dsw-alias-label-secondary, #6b7280)",
+  color: T.textSecondary,
 };
 
 const fieldValueStyle: CSSProperties = {
   fontSize: "12px",
   fontWeight: "600",
-  color: "var(--dsw-alias-label-primary, #1f2937)",
+  color: T.text,
   userSelect: "text",
 };
 
 const descBoxStyle: CSSProperties = {
   padding: "10px",
-  background: "var(--dsw-alias-bg-layer-1, #fff)",
-  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
+  background: T.surface,
+  border: `1px solid ${T.border}`,
   borderRadius: "6px",
   fontSize: "12px",
   lineHeight: 1.6,
-  color: "var(--dsw-alias-label-primary, #374151)",
+  color: T.text,
   userSelect: "text",
   overflowWrap: "break-word",
   maxHeight: "260px",
@@ -883,9 +892,9 @@ const descBoxStyle: CSSProperties = {
 const emptyDescStyle: CSSProperties = {
   padding: "12px",
   textAlign: "center",
-  color: "var(--dsw-alias-label-secondary, #9ca3af)",
+  color: T.textCaption,
   fontSize: "12px",
-  border: "1px dashed var(--dsw-alias-border-l2, #e3e6ea)",
+  border: `1px dashed ${T.border}`,
   borderRadius: "6px",
 };
 
@@ -895,21 +904,21 @@ const paginationBarStyle: CSSProperties = {
   justifyContent: "space-between",
   marginTop: "10px",
   paddingTop: "8px",
-  borderTop: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
+  borderTop: `1px solid ${T.border}`,
 };
 
 const pageBtnStyle = (disabled: boolean): CSSProperties => ({
-  border: "1px solid var(--dsw-alias-border-l2, #e3e6ea)",
-  background: disabled ? "var(--dsw-alias-bg-layer-2, #f3f4f6)" : "var(--dsw-alias-bg-layer-1, #fff)",
-  color: disabled ? "var(--dsw-alias-label-secondary, #9ca3af)" : "var(--dsw-alias-label-primary, #1f2937)",
+  border: `1px solid ${T.border}`,
+  background: disabled ? T.surfaceMuted : T.surface,
+  color: disabled ? T.textCaption : T.text,
   cursor: disabled ? "not-allowed" : "pointer",
   padding: "3px 10px",
   fontSize: "12px",
-  borderRadius: "4px",
+  borderRadius: T.radiusXs,
   opacity: disabled ? 0.6 : 1,
 });
 
 const pageInfoStyle: CSSProperties = {
   fontSize: "11px",
-  color: "var(--dsw-alias-label-secondary, #6b7280)",
+  color: T.textSecondary,
 };

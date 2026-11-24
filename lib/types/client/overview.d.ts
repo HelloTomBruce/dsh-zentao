@@ -1,28 +1,30 @@
 /**
- * 右侧栏禅道概览 Tab 面板的纯函数/类型部分：overview 响应的汇总逻辑。
+ * 右侧栏禅道概览 Tab 面板的纯函数/类型部分：单视图数据模型与筛选查询串构造。
  * 组件部分见 panel.tsx（vite 的 .js 后缀解析不覆盖 .tsx，纯函数必须放 .ts，
  * 且不能与 panel.tsx 同名以免 tsc 输出冲突）。
+ *
+ * 架构（TASK-009 起）：overview 端点按 view 参数返回**单视图**数据
+ * {view, rows, ...}，面板切 Tab 才拉对应视图（懒加载 + 服务端按视图缓存）。
  */
+/** 视图 key（后续任务扩展 stories/testcases/testtasks）。 */
+export type PanelTab = "tasks" | "bugs";
 export interface WorkspaceBinding {
     product?: number;
     project?: number;
     execution?: number;
 }
-export interface TaskRow {
+/** 单视图数据行：任务用 name、Bug/需求/用例用 title（CLI 原样透传）。 */
+export interface OverviewRow {
     id: string | number;
-    name: string;
-    status: string;
+    name?: string;
+    title?: string;
+    status?: string;
     [k: string]: unknown;
 }
-export interface BugRow {
-    id: string | number;
-    title: string;
-    status: string;
-    [k: string]: unknown;
-}
+/** overview 端点响应（单视图）。 */
 export interface OverviewResponse {
-    tasks: TaskRow[];
-    bugs: BugRow[];
+    view: PanelTab;
+    rows: OverviewRow[];
     config?: WorkspaceBinding;
     unconfigured?: boolean;
     currentUser?: {
@@ -33,18 +35,8 @@ export interface OverviewResponse {
     note?: string;
     error?: string;
 }
-/** 汇总计数；未关闭 Bug（徽标用）单独统计。 */
-export declare function overviewSummary(res: OverviewResponse): {
-    tasks: number;
-    bugs: number;
-    openBugs: number;
-} | {
-    error: string;
-    tasks: number;
-    bugs: number;
-    openBugs: number;
-};
-export type PanelTab = "tasks" | "bugs";
+/** 未关闭行数（标题栏未关闭 Bug 徽标用）。 */
+export declare function openRowCount(rows: OverviewRow[]): number;
 /** 一个筛选项：browse → --browse-type（服务端状态集）；filter → --filter（拉取范围内条件过滤）。 */
 export interface FilterOption {
     key: string;
@@ -84,9 +76,9 @@ export interface TabFilterState {
 }
 export declare function defaultTabFilter(tab: PanelTab): TabFilterState;
 /**
- * 由两个视图的筛选状态构造 overview 请求的查询串（不含 workspace 与前导 &）。
- * 状态选项的 filter 与 pri/severity 合并为一个逗号 AND 表达式；
- * search 经 encodeURIComponent 编码，空值不带参数。
+ * 由单视图的筛选状态构造 overview 请求的筛选查询串
+ * （browse/filter/search，不含 workspace 与 view）。
+ * 状态选项的 filter 与 pri/severity 合并为一个逗号 AND 表达式。
  */
-export declare function buildOverviewQuery(task: TabFilterState, bug: TabFilterState): string;
+export declare function buildOverviewQuery(view: PanelTab, sel: TabFilterState): string;
 //# sourceMappingURL=overview.d.ts.map

@@ -13,17 +13,20 @@ export declare const LOGIN_PATH = "/__dsh-zentao__/login";
 export declare const FILE_PATH = "/__dsh-zentao__/file";
 export interface OverviewRow {
     id: string | number;
-    /** 标题字段：任务行用 name，bug 行用 title（CLI 原样透传，两者都可能出现）。 */
+    /** 标题字段：任务行用 name，bug/需求/用例行用 title（CLI 原样透传，两者都可能出现）。 */
     name?: string;
     title?: string;
     status: string;
     [key: string]: unknown;
 }
-export interface OverviewData {
-    /** 执行下的任务（配置缺 execution 时为空）。 */
-    tasks: OverviewRow[];
-    /** 范围内的 Bug（product > project > execution 优先取一）。 */
-    bugs: OverviewRow[];
+/** 概览视图（TASK-009 起按视图懒加载；后续任务扩展 stories/testcases/testtasks）。 */
+export type OverviewView = "tasks" | "bugs";
+export declare const OVERVIEW_VIEWS: readonly OverviewView[];
+export interface OverviewViewData {
+    /** 本次返回的视图。 */
+    view: OverviewView;
+    /** 该视图的数据行。 */
+    rows: OverviewRow[];
     /** 生效的工作区配置摘要（客户端展示绑定信息；未配置时缺省）。 */
     config?: WorkspaceConfig | undefined;
     /** 未配置工作区绑定（客户端显示引导态）。 */
@@ -39,10 +42,6 @@ export interface OverviewData {
     note?: string | undefined;
     error?: string | undefined;
 }
-interface Queries {
-    tasks: () => Promise<unknown>;
-    bugs: () => Promise<unknown>;
-}
 /**
  * 集群负载均衡容错：个别后端节点异常时——① 回退返回其他 execution 的数据
  * （数据形状检查，仅 tasks 用 expectExecution）；② 翻页中途报「服务端分页未
@@ -57,24 +56,21 @@ export declare function fetchWithNodeRetry(run: () => Promise<unknown>, expectEx
  */
 export declare const TASK_PANEL_FIELDS = "id,name,status,pri,deadline,assignedTo,assignedToRealName,openedBy,execution";
 export declare const BUG_PANEL_FIELDS = "id,title,status,pri,severity,deadline,assignedTo,assignedToRealName,openedBy";
-/** 面板状态筛选（经查询参数传入，白名单校验后拼入 CLI 参数）。 */
+/** 面板筛选（单视图作用域，经查询参数传入，白名单校验后拼入 CLI 参数）。 */
 export interface PanelFilters {
-    taskBrowse?: string;
-    taskFilter?: string;
-    taskSearch?: string;
-    bugBrowse?: string;
-    bugFilter?: string;
-    bugSearch?: string;
+    browse?: string;
+    filter?: string;
+    search?: string;
 }
+export type ViewQueryFn = () => Promise<unknown>;
 /**
- * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
- * - tasks: `task list --execution-id=<id> --fields=<面板列> [--browse-type/--filter/--search] --page-size=200 --all`（execution 缺省 → 空数组 + note）
- * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> [--browse-type/--filter/--search] --page-size=200 --all`
- * 默认 run 解包 runZentao 的 {data, meta}，只取 data（面板暂不需要完整性元数据）。
+ * 按工作区配置与视图构造单条 CLI 查询（zentao-cli ≥ 0.5.0 命令面）：
+ * `<module> list <scope> --fields=<面板列> [--browse-type/--filter/--search] --page-size=200 --all`
+ * 默认 run 解包 runZentao 的 {data, meta}，只取 data；scope 缺失返回 null（调用方给 note）。
  */
-export declare function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>, filters?: PanelFilters): Queries;
-/** 聚合两次查询；单边失败时另一边仍返回，并透出首个错误信息。 */
-export declare function overviewData(config: WorkspaceConfig, queries: Queries, profileInfo?: CurrentProfileInfo | null): Promise<OverviewData>;
+export declare function createViewQuery(config: WorkspaceConfig, view: OverviewView, filters?: PanelFilters, run?: (args: string[]) => Promise<unknown>): ViewQueryFn | null;
+/** 单视图查询聚合：失败透出错误信息，scope 缺失给 note。 */
+export declare function overviewViewData(config: WorkspaceConfig, view: OverviewView, query: ViewQueryFn | null, profileInfo?: CurrentProfileInfo | null): Promise<OverviewViewData>;
 export interface LoginBody {
     server?: string;
     account?: string;
@@ -97,15 +93,17 @@ export declare function registerLoginApi(ctx: Context, run?: RunFn): () => void;
  */
 export declare function registerFileApi(ctx: Context): () => void;
 /**
- * 解析面板筛选参数（taskBrowse/taskFilter/taskSearch/bugBrowse/bugFilter/bugSearch）。
+ * 解析面板筛选参数（browse/filter/search，单视图作用域）。
  * 返回 null 表示存在非法参数（调用方应 400）；全部缺省返回 {}。
  * search 允许任意非控字符（含中文），仅拒绝 - 开头（防 CLI flag 注入）与超长。
  */
 export declare function panelFiltersOf(req: IncomingMessage): PanelFilters | null;
+/** 解析视图参数：缺省 tasks；不在白名单返回 null（调用方 400）。 */
+export declare function overviewViewOf(req: IncomingMessage): OverviewView | null;
 /**
- * GET /__dsh-zentao__/overview?workspace=<工作区绝对路径>[&fresh=1]：
- * 读该工作区的 .dsh-zentao.json，按配置拉取任务与 Bug。缓存按工作区分键
- * （60s TTL + 并发去重）；fresh=1 强制刷新（登录后/手动刷新用）。
+ * GET /__dsh-zentao__/overview?workspace=<工作区绝对路径>[&view=tasks|bugs][&fresh=1]：
+ * 读该工作区的 .dsh-zentao.json，按配置拉取**单个视图**的数据（面板切 Tab 懒加载）。
+ * 缓存按 工作区+视图+筛选 分键（60s TTL + 并发去重）；fresh=1 强制刷新（登录后/手动刷新用）。
  */
 export declare function registerOverviewApi(ctx: Context, deps?: {
     readConfig?: typeof readWorkspaceConfig;

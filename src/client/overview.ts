@@ -1,8 +1,14 @@
 /**
- * 右侧栏禅道概览 Tab 面板的纯函数/类型部分：overview 响应的汇总逻辑。
+ * 右侧栏禅道概览 Tab 面板的纯函数/类型部分：单视图数据模型与筛选查询串构造。
  * 组件部分见 panel.tsx（vite 的 .js 后缀解析不覆盖 .tsx，纯函数必须放 .ts，
  * 且不能与 panel.tsx 同名以免 tsc 输出冲突）。
+ *
+ * 架构（TASK-009 起）：overview 端点按 view 参数返回**单视图**数据
+ * {view, rows, ...}，面板切 Tab 才拉对应视图（懒加载 + 服务端按视图缓存）。
  */
+
+/** 视图 key（后续任务扩展 stories/testcases/testtasks）。 */
+export type PanelTab = "tasks" | "bugs";
 
 export interface WorkspaceBinding {
   product?: number;
@@ -10,23 +16,19 @@ export interface WorkspaceBinding {
   execution?: number;
 }
 
-export interface TaskRow {
+/** 单视图数据行：任务用 name、Bug/需求/用例用 title（CLI 原样透传）。 */
+export interface OverviewRow {
   id: string | number;
-  name: string;
-  status: string;
+  name?: string;
+  title?: string;
+  status?: string;
   [k: string]: unknown;
 }
 
-export interface BugRow {
-  id: string | number;
-  title: string;
-  status: string;
-  [k: string]: unknown;
-}
-
+/** overview 端点响应（单视图）。 */
 export interface OverviewResponse {
-  tasks: TaskRow[];
-  bugs: BugRow[];
+  view: PanelTab;
+  rows: OverviewRow[];
   config?: WorkspaceBinding;
   unconfigured?: boolean;
   currentUser?: { account: string; realname?: string };
@@ -35,18 +37,12 @@ export interface OverviewResponse {
   error?: string;
 }
 
-/** 汇总计数；未关闭 Bug（徽标用）单独统计。 */
-export function overviewSummary(res: OverviewResponse) {
-  const tasks = Array.isArray(res.tasks) ? res.tasks.length : 0;
-  const bugs = Array.isArray(res.bugs) ? res.bugs : [];
-  const openBugs = bugs.filter((b) => b.status !== "closed").length;
-  const base = { tasks, bugs: bugs.length, openBugs };
-  return res.error !== undefined ? { ...base, error: res.error } : base;
+/** 未关闭行数（标题栏未关闭 Bug 徽标用）。 */
+export function openRowCount(rows: OverviewRow[]): number {
+  return rows.filter((r) => r.status !== "closed").length;
 }
 
 /* ---------- 状态筛选（0.5.0 CLI 的 --browse-type / --filter 能力） ---------- */
-
-export type PanelTab = "tasks" | "bugs";
 
 /** 一个筛选项：browse → --browse-type（服务端状态集）；filter → --filter（拉取范围内条件过滤）。 */
 export interface FilterOption {
@@ -122,25 +118,21 @@ export function defaultTabFilter(tab: PanelTab): TabFilterState {
 }
 
 /**
- * 由两个视图的筛选状态构造 overview 请求的查询串（不含 workspace 与前导 &）。
- * 状态选项的 filter 与 pri/severity 合并为一个逗号 AND 表达式；
- * search 经 encodeURIComponent 编码，空值不带参数。
+ * 由单视图的筛选状态构造 overview 请求的筛选查询串
+ * （browse/filter/search，不含 workspace 与 view）。
+ * 状态选项的 filter 与 pri/severity 合并为一个逗号 AND 表达式。
  */
-export function buildOverviewQuery(task: TabFilterState, bug: TabFilterState): string {
+export function buildOverviewQuery(view: PanelTab, sel: TabFilterState): string {
+  const options = FILTER_OPTIONS[view];
+  const opt = options.find((o) => o.key === sel.status) ?? options.find((o) => o.key === DEFAULT_FILTER_KEY[view]);
   const parts: string[] = [];
-  const apply = (tab: PanelTab, sel: TabFilterState, prefix: "task" | "bug"): void => {
-    const options = FILTER_OPTIONS[tab];
-    const opt = options.find((o) => o.key === sel.status) ?? options.find((o) => o.key === DEFAULT_FILTER_KEY[tab]);
-    if (opt?.browse !== undefined) parts.push(`${prefix}Browse=${encodeURIComponent(opt.browse)}`);
-    const conditions = [opt?.filter];
-    if (sel.pri !== "") conditions.push(`pri=${sel.pri}`);
-    if (tab === "bugs" && sel.severity !== "") conditions.push(`severity=${sel.severity}`);
-    const filter = conditions.filter((c): c is string => c !== undefined && c !== "").join(",");
-    if (filter !== "") parts.push(`${prefix}Filter=${encodeURIComponent(filter)}`);
-    const search = sel.search.trim();
-    if (search !== "") parts.push(`${prefix}Search=${encodeURIComponent(search)}`);
-  };
-  apply("tasks", task, "task");
-  apply("bugs", bug, "bug");
+  if (opt?.browse !== undefined) parts.push(`browse=${encodeURIComponent(opt.browse)}`);
+  const conditions = [opt?.filter];
+  if (sel.pri !== "") conditions.push(`pri=${sel.pri}`);
+  if (view === "bugs" && sel.severity !== "") conditions.push(`severity=${sel.severity}`);
+  const filter = conditions.filter((c): c is string => c !== undefined && c !== "").join(",");
+  if (filter !== "") parts.push(`filter=${encodeURIComponent(filter)}`);
+  const search = sel.search.trim();
+  if (search !== "") parts.push(`search=${encodeURIComponent(search)}`);
   return parts.join("&");
 }
