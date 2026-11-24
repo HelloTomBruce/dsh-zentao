@@ -199,14 +199,17 @@ function DetailView({
     setLoadError(null);
     if (type === "testtasks") return; // 无 get 子命令
     fetch(`${DETAIL_URL}?view=${type}&id=${row.id}`, { cache: "no-store" })
-      .then((r) => r.json() as Promise<{ data?: Record<string, unknown>; error?: string; unsupported?: boolean }>)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}（服务端未包含详情接口，请重启 DSH 后重试）`);
+        return r.json() as Promise<{ data?: Record<string, unknown>; error?: string; unsupported?: boolean }>;
+      })
       .then((d) => {
         if (!alive) return;
         if (d.error !== undefined) setLoadError(d.error);
         else if (d.data !== undefined) setDetail(d.data);
         // unsupported 静默：仅用列表行展示
       })
-      .catch(() => { if (alive) setLoadError("网络错误"); });
+      .catch((err: unknown) => { if (alive) setLoadError(err instanceof Error ? err.message : "网络错误"); });
     return () => { alive = false; };
   }, [type, row.id]);
 
