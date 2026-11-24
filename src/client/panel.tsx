@@ -17,12 +17,14 @@ const LOGIN_URL = "/__dsh-zentao__/login";
 const CONFIG_FILENAME = ".dsh-zentao.json";
 const CONFIG_SAMPLE = '{ "product": 2, "execution": 168 }';
 
-function useOverview(workspacePath: string, filterQuery: string): { data: OverviewResponse | null; refresh: () => void } {
+function useOverview(workspacePath: string, filterQuery: string): { data: OverviewResponse | null; refresh: () => void; loading: boolean } {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [tick, setTick] = useState(0);
+  const [loading, setLoading] = useState(false);
   useEffect(() => {
     if (workspacePath === "") return;
     let alive = true;
+    setLoading(true);
     // 首次挂载走服务端 60s 缓存（秒开）；显式 refresh（登录后）强制刷新。
     // 筛选条件经 filterQuery 进缓存键，切换筛选即自动拉取对应数据。
     const url = tick === 0
@@ -35,10 +37,11 @@ function useOverview(workspacePath: string, filterQuery: string): { data: Overvi
         if (!alive) return;
         const message = err instanceof Error && /^HTTP /.test(err.message) ? err.message : "网络错误";
         setData({ tasks: [], bugs: [], error: message });
-      });
+      })
+      .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [tick, workspacePath, filterQuery]);
-  return { data, refresh: () => setTick((t) => t + 1) };
+  return { data, refresh: () => setTick((t) => t + 1), loading };
 }
 
 const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> = {
@@ -353,14 +356,15 @@ function LoginField({ label, value, set, placeholder, type = "text" }: {
   );
 }
 
-/** 面板内登录表单：提交到同源 /__dsh-zentao__/login，成功后回调刷新数据。 */
-function LoginForm({ onLoggedIn }: { onLoggedIn: () => void }) {
+/** 面板内登录表单：提交到同源 /__dsh-zentao__/login，结果（成功/失败原因）显式显示。 */
+function LoginForm({ onLoggedIn, onClose }: { onLoggedIn: () => void; onClose?: (() => void) | undefined }) {
   const [server, setServer] = useState("");
   const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
   const submit = () => {
     if (pending) return;
     setPending(true);
@@ -372,12 +376,25 @@ function LoginForm({ onLoggedIn }: { onLoggedIn: () => void }) {
     })
       .then((r) => r.json() as Promise<{ ok?: boolean; error?: string }>)
       .then((d) => {
-        if (d.ok === true) onLoggedIn();
-        else setError(d.error ?? "登录失败");
+        if (d.ok === true) {
+          // 成功：显式展示结果再回调刷新（数据量较大，刷新要数秒——告知用户）
+          setSuccess(true);
+          onLoggedIn();
+        } else {
+          setError(d.error ?? "登录失败");
+        }
       })
       .catch(() => setError("网络错误"))
       .finally(() => setPending(false));
   };
+  // 成功态：结果明确可见，表单替换为成功提示（可手动关闭）
+  if (success) {
+    return createElement("div", null,
+      createElement("div", { style: sectionTitleStyle }, "登录禅道"),
+      createElement("div", { style: loginSuccessStyle }, "✓ 登录成功，正在刷新数据（数据量较大时约需几秒）…"),
+      onClose !== undefined && createElement("button", { onClick: onClose, style: reloginLinkStyle }, "收起"),
+    );
+  }
   return createElement("div", null,
     createElement("div", { style: sectionTitleStyle }, "登录禅道"),
     createElement(LoginField, { label: "服务地址", value: server, set: setServer, placeholder: "http://zentao.example.com" }),
@@ -402,6 +419,11 @@ const loginInputStyle: CSSProperties = {
 const loginErrorStyle: CSSProperties = {
   fontSize: "12px", color: "var(--dsh-danger, #dc2626)", margin: "4px 0 8px",
   whiteSpace: "pre-wrap", wordBreak: "break-all",
+};
+
+/** 登录成功提示：绿色对勾文案，明确告知后续行为。 */
+const loginSuccessStyle: CSSProperties = {
+  fontSize: "12px", color: "var(--dsh-success, #16a34a)", margin: "4px 0 10px", fontWeight: 600,
 };
 const loginSubmitStyle = (pending: boolean): CSSProperties => ({
   width: "100%", padding: "7px 0", fontSize: "13px", fontWeight: "600",
@@ -465,7 +487,7 @@ export function ZentaoPanelBody() {
     bugs: defaultTabFilter("bugs"),
   });
   const filterQuery = buildOverviewQuery(filterSel.tasks, filterSel.bugs);
-  const { data, refresh } = useOverview(workspace.path, filterQuery);
+  const { data, refresh, loading } = useOverview(workspace.path, filterQuery);
 
   if (workspace.path === "") {
     return createElement("div", { style: paneWrapperStyle },
@@ -479,6 +501,7 @@ export function ZentaoPanelBody() {
   if (data.error !== undefined) {
     return createElement("div", { style: paneWrapperStyle },
       createElement("div", { style: emptyStyle }, `禅道数据获取失败：${data.error}`),
+      loading && createElement("div", { style: hintStyle }, "正在刷新数据（数据量较大时约需几秒）…"),
       createElement("div", { style: { height: "10px" } }),
       createElement("button", { onClick: refresh, style: reloginLinkStyle }, "重试刷新"),
       createElement("div", { style: { height: "10px" } }),
@@ -600,9 +623,10 @@ export function ZentaoPanelBody() {
 
     createElement("div", { style: { height: "16px" } }),
     showLogin
-      ? createElement(LoginForm, { onLoggedIn: () => { setShowLogin(false); refresh(); } })
+      ? createElement(LoginForm, { onLoggedIn: refresh, onClose: () => setShowLogin(false) })
       : createElement("div", { style: { display: "flex", gap: "12px", alignItems: "center" } },
           createElement("button", { onClick: refresh, style: reloginLinkStyle }, "刷新数据"),
+          loading && createElement("span", { style: hintStyle }, "刷新中…"),
           createElement("span", { style: { color: "var(--dsh-border, #e3e6ea)", fontSize: "12px" } }, "|"),
           createElement("button", { onClick: () => setShowLogin(true), style: reloginLinkStyle }, "重新登录 / 切换账号")),
   );
