@@ -53,15 +53,40 @@ export interface FilterOption {
     filter?: string;
 }
 /**
- * 面板状态筛选选项。默认项不带参数，与现状一致（task list 的 CLI 默认
- * browseType 就是 unclosed）；状态明细项统一 browse=all + filter status=<x>
- * （避免服务端默认状态集与条件过滤相交导致空结果）。
+ * 面板状态筛选选项（已按真实服务端行为校准）：
+ * - tasks：本服务端（禅道 22.0 集群 + app=project 上下文）--browse-type 被静默忽略
+ *   （unclosed 仍返回全部 2052 条），故全部状态项改走 --filter 表达式
+ * - bugs：--browse-type 有效（unclosed 726→88），默认项用它；状态明细项
+ *   统一 browse=all + filter（避免与服务端默认状态集相交导致空结果）
  */
 export declare const FILTER_OPTIONS: Record<PanelTab, readonly FilterOption[]>;
 export declare const DEFAULT_FILTER_KEY: Record<PanelTab, string>;
+/** 优先级选项（tasks/bugs 通用；空 key = 不筛选）。 */
+export declare const PRI_OPTIONS: readonly {
+    key: string;
+    label: string;
+}[];
+/** 严重程度选项（仅 Bug 视图；空 key = 不筛选）。 */
+export declare const SEVERITY_OPTIONS: readonly {
+    key: string;
+    label: string;
+}[];
+/** 单个视图的完整筛选状态。 */
+export interface TabFilterState {
+    /** 状态选项 key（FILTER_OPTIONS）。 */
+    status: string;
+    /** 优先级（"" 不筛选）。 */
+    pri: string;
+    /** 严重程度（"" 不筛选；仅 bugs 使用）。 */
+    severity: string;
+    /** 关键词（"" 不搜索；回车确认后生效）。 */
+    search: string;
+}
+export declare function defaultTabFilter(tab: PanelTab): TabFilterState;
 /**
- * 由两个视图的筛选选择构造 overview 请求的查询串（不含 workspace 与前导 &）。
- * 未选（默认项）时不带参数；未知 key 回退到该视图默认项。
+ * 由两个视图的筛选状态构造 overview 请求的查询串（不含 workspace 与前导 &）。
+ * 状态选项的 filter 与 pri/severity 合并为一个逗号 AND 表达式；
+ * search 经 encodeURIComponent 编码，空值不带参数。
  */
-export declare function buildOverviewQuery(taskSel: string, bugSel: string): string;
+export declare function buildOverviewQuery(task: TabFilterState, bug: TabFilterState): string;
 //# sourceMappingURL=overview.d.ts.map

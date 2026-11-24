@@ -16,16 +16,16 @@ describe("createQueries", () => {
     const run = vi.fn(async (args: string[]) => (args[0] === "task" ? [] : []));
     const queries = createQueries({ product: 2, execution: 168 }, run);
     await Promise.all([queries.tasks(), queries.bugs()]);
-    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--all"]);
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, "--all"]);
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
   });
 
   it("无 product 时 bug 范围按 project > execution 兜底", async () => {
     const run = vi.fn(async () => []);
     await createQueries({ project: 5, execution: 168 }, run).bugs();
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--project=5", `--fields=${BUG_PANEL_FIELDS}`, "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--project=5", `--fields=${BUG_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
     await createQueries({ execution: 168 }, run).bugs();
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--execution=168", `--fields=${BUG_PANEL_FIELDS}`, "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--execution=168", `--fields=${BUG_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
   });
 
   it("缺 execution 时任务查询为空（不调 CLI）", async () => {
@@ -57,8 +57,8 @@ describe("createQueries", () => {
       taskBrowse: "all", taskFilter: "status=doing", bugFilter: "status=active",
     });
     await Promise.all([queries.tasks(), queries.bugs()]);
-    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--browse-type=all", "--filter=status=doing", "--all"]);
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, "--filter=status=active", "--all"]);
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--browse-type=all", "--filter=status=doing", `--page-size=200`, "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, "--filter=status=active", `--page-size=200`, "--all"]);
   });
 
   it("「服务端分页未向前推进」瞬时错误自动重试（集群节点容错）", async () => {
@@ -235,8 +235,8 @@ describe("registerOverviewApi", () => {
     const res = fakeRes();
     await setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run })
       .handler(fakeReq("GET", "/__dsh-zentao__/overview?workspace=%2Fws%2Fa"), res);
-    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--all"]);
-    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, "--all"]);
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
+    expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, `--page-size=200`, "--all"]);
     const body = JSON.parse(res.body);
     expect(body.tasks).toHaveLength(1);
     expect(body.bugs).toHaveLength(1);
@@ -278,7 +278,7 @@ describe("registerOverviewApi", () => {
     const route = setup({ readConfig: async () => ({ ok: true, config: { product: 2, execution: 168 } }), run });
     const res = fakeRes();
     await route.handler(fakeReq("GET", `/__dsh-zentao__/overview?workspace=%2Fws%2Fa&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}`), res);
-    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--browse-type=all", "--filter=status=doing", "--all"]);
+    expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--browse-type=all", "--filter=status=doing", `--page-size=200`, "--all"]);
     expect(res.status).toBe(200);
   });
 
@@ -314,11 +314,17 @@ describe("panelFiltersOf", () => {
     expect(panelFiltersOf(req("/__dsh-zentao__/overview?workspace=/ws/a"))).toEqual({});
   });
 
-  it("解析并 URL 解码四个筛选参数", () => {
-    const url = `/x?workspace=/w&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}&bugBrowse=all&bugFilter=${encodeURIComponent("status=active")}`;
+  it("解析并 URL 解码全部筛选参数（含 search）", () => {
+    const url = `/x?workspace=/w&taskBrowse=all&taskFilter=${encodeURIComponent("status=doing")}&taskSearch=${encodeURIComponent("登录")}&bugBrowse=all&bugFilter=${encodeURIComponent("status=active")}&bugSearch=${encodeURIComponent("崩溃")}`;
     expect(panelFiltersOf(req(url))).toEqual({
-      taskBrowse: "all", taskFilter: "status=doing", bugBrowse: "all", bugFilter: "status=active",
+      taskBrowse: "all", taskFilter: "status=doing", taskSearch: "登录",
+      bugBrowse: "all", bugFilter: "status=active", bugSearch: "崩溃",
     });
+  });
+
+  it("search 允许中文但拒绝 - 开头（防 CLI flag 注入）", () => {
+    expect(panelFiltersOf(req(`/x?taskSearch=${encodeURIComponent("--format=raw")}`))).toBeNull();
+    expect(panelFiltersOf(req(`/x?taskSearch=${encodeURIComponent("正常关键词")}`))).toEqual({ taskSearch: "正常关键词" });
   });
 
   it("非法字符返回 null", () => {

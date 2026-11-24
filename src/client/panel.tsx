@@ -6,9 +6,9 @@
  * overview.ts 与 workspace.ts。
  */
 import { createElement, useEffect, useState } from "react";
-import type { ChangeEvent, CSSProperties, MouseEvent } from "react";
-import type { OverviewResponse, PanelTab } from "./overview.ts";
-import { buildOverviewQuery, DEFAULT_FILTER_KEY, FILTER_OPTIONS, overviewSummary } from "./overview.ts";
+import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent } from "react";
+import type { OverviewResponse, PanelTab, TabFilterState } from "./overview.ts";
+import { buildOverviewQuery, defaultTabFilter, FILTER_OPTIONS, overviewSummary, PRI_OPTIONS, SEVERITY_OPTIONS } from "./overview.ts";
 import { useActiveWorkspace } from "./workspace.ts";
 import { ZentaoTabIcon } from "./icons.tsx";
 
@@ -414,7 +414,7 @@ type TabKey = "tasks" | "bugs";
 /** Tab 标题栏：图标 + 标题 + 未关闭 Bug 计数徽标（默认筛选，数据走服务端 60s 缓存）。 */
 export function ZentaoPanelTitle() {
   const workspace = useActiveWorkspace();
-  const { data } = useOverview(workspace.path, buildOverviewQuery(DEFAULT_FILTER_KEY.tasks, DEFAULT_FILTER_KEY.bugs));
+  const { data } = useOverview(workspace.path, buildOverviewQuery(defaultTabFilter("tasks"), defaultTabFilter("bugs")));
   const summary = data === null ? null : overviewSummary(data);
   return createElement("span", { style: titleWrapperStyle },
     createElement(ZentaoTabIcon, { style: { marginRight: 6 } }),
@@ -459,10 +459,10 @@ export function ZentaoPanelBody() {
   const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(null);
   const [onlyMine, setOnlyMine] = useState(false);
   const [page, setPage] = useState(1);
-  // 状态筛选：每个视图独立记住选择；改动即经查询串触发服务端重查
-  const [filterSel, setFilterSel] = useState<Record<PanelTab, string>>({
-    tasks: DEFAULT_FILTER_KEY.tasks,
-    bugs: DEFAULT_FILTER_KEY.bugs,
+  // 筛选状态：每个视图独立记住（状态/优先级/严重程度/关键词）；改动即经查询串触发服务端重查
+  const [filterSel, setFilterSel] = useState<Record<PanelTab, TabFilterState>>({
+    tasks: defaultTabFilter("tasks"),
+    bugs: defaultTabFilter("bugs"),
   });
   const filterQuery = buildOverviewQuery(filterSel.tasks, filterSel.bugs);
   const { data, refresh } = useOverview(workspace.path, filterQuery);
@@ -525,14 +525,14 @@ export function ZentaoPanelBody() {
           onBack: () => setSelectedRow(null),
         })
       : createElement("div", { role: "tabpanel", style: { minHeight: "120px" } },
-          // 快捷过滤栏：状态筛选 + 全部 vs 指派给我
+          // 快捷过滤栏：状态/优先级（Bug 加严重程度）/关键词 + 全部 vs 指派给我
           createElement("div", { style: filterBarStyle },
-            createElement("div", { style: { display: "flex", gap: "6px", alignItems: "center" } },
+            createElement("div", { style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" } },
               createElement("select", {
-                value: filterSel[tab],
+                value: filterSel[tab].status,
                 onChange: (e: ChangeEvent<HTMLSelectElement>) => {
                   const v = e.target.value;
-                  setFilterSel((s) => ({ ...s, [tab]: v }));
+                  setFilterSel((s) => ({ ...s, [tab]: { ...s[tab], status: v } }));
                   setSelectedRow(null);
                   setPage(1);
                 },
@@ -540,6 +540,43 @@ export function ZentaoPanelBody() {
                 "aria-label": "状态筛选",
               }, ...FILTER_OPTIONS[tab].map((o) =>
                 createElement("option", { key: o.key, value: o.key }, o.label))),
+              createElement("select", {
+                value: filterSel[tab].pri,
+                onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+                  const v = e.target.value;
+                  setFilterSel((s) => ({ ...s, [tab]: { ...s[tab], pri: v } }));
+                  setSelectedRow(null);
+                  setPage(1);
+                },
+                style: filterSelectStyle,
+                "aria-label": "优先级筛选",
+              }, ...PRI_OPTIONS.map((o) =>
+                createElement("option", { key: o.key, value: o.key }, o.label))),
+              tab === "bugs" && createElement("select", {
+                value: filterSel.bugs.severity,
+                onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+                  const v = e.target.value;
+                  setFilterSel((s) => ({ ...s, bugs: { ...s.bugs, severity: v } }));
+                  setSelectedRow(null);
+                  setPage(1);
+                },
+                style: filterSelectStyle,
+                "aria-label": "严重程度筛选",
+              }, ...SEVERITY_OPTIONS.map((o) =>
+                createElement("option", { key: o.key, value: o.key }, o.label))),
+              createElement("input", {
+                defaultValue: filterSel[tab].search,
+                placeholder: "关键词，回车搜索",
+                onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
+                  if (e.key !== "Enter") return;
+                  const v = (e.target as HTMLInputElement).value;
+                  setFilterSel((s) => ({ ...s, [tab]: { ...s[tab], search: v } }));
+                  setSelectedRow(null);
+                  setPage(1);
+                },
+                style: filterSearchStyle,
+                "aria-label": "关键词搜索",
+              }),
               createElement("button", {
                 onClick: () => { setOnlyMine(false); setSelectedRow(null); setPage(1); },
                 style: filterBtnStyle(!onlyMine),
@@ -624,6 +661,18 @@ const filterSelectStyle: CSSProperties = {
   fontSize: "11px",
   borderRadius: "12px",
   outline: "none",
+};
+
+/** 关键词搜索输入：与筛选下拉同风格的小型输入框。 */
+const filterSearchStyle: CSSProperties = {
+  border: "1px solid var(--dsh-border, #e3e6ea)",
+  background: "var(--dsh-surface, #fff)",
+  color: "var(--dsh-text, #1f2329)",
+  padding: "3px 8px",
+  fontSize: "11px",
+  borderRadius: "12px",
+  outline: "none",
+  width: "110px",
 };
 
 const userTagStyle: CSSProperties = {

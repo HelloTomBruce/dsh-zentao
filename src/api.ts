@@ -85,14 +85,19 @@ export const BUG_PANEL_FIELDS = "id,title,status,pri,severity,deadline,assignedT
 export interface PanelFilters {
   taskBrowse?: string;
   taskFilter?: string;
+  taskSearch?: string;
   bugBrowse?: string;
   bugFilter?: string;
+  bugSearch?: string;
 }
+
+/** 概览查询的每页条数：默认 20 页大小会把大执行拖成上百页，200 显著减页数（实测 103→11 页、3x 提速）。 */
+const OVERVIEW_PAGE_SIZE = 200;
 
 /**
  * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
- * - tasks: `task list --execution-id=<id> --fields=<面板列> [--browse-type/--filter] --all`（execution 缺省 → 空数组 + note）
- * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> [--browse-type/--filter] --all`
+ * - tasks: `task list --execution-id=<id> --fields=<面板列> [--browse-type/--filter/--search] --page-size=200 --all`（execution 缺省 → 空数组 + note）
+ * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> [--browse-type/--filter/--search] --page-size=200 --all`
  * 默认 run 解包 runZentao 的 {data, meta}，只取 data（面板暂不需要完整性元数据）。
  */
 export function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>, filters: PanelFilters = {}): Queries {
@@ -100,23 +105,25 @@ export function createQueries(config: WorkspaceConfig, run?: (args: string[]) =>
   const taskExtra = [
     ...(filters.taskBrowse !== undefined ? [`--browse-type=${filters.taskBrowse}`] : []),
     ...(filters.taskFilter !== undefined ? [`--filter=${filters.taskFilter}`] : []),
+    ...(filters.taskSearch !== undefined ? [`--search=${filters.taskSearch}`] : []),
   ];
   const bugExtra = [
     ...(filters.bugBrowse !== undefined ? [`--browse-type=${filters.bugBrowse}`] : []),
     ...(filters.bugFilter !== undefined ? [`--filter=${filters.bugFilter}`] : []),
+    ...(filters.bugSearch !== undefined ? [`--search=${filters.bugSearch}`] : []),
   ];
   return {
     tasks: config.execution === undefined
       ? async () => []
       : async () => {
-          const args = ["task", "list", `--execution-id=${config.execution}`, `--fields=${TASK_PANEL_FIELDS}`, ...taskExtra, "--all"];
+          const args = ["task", "list", `--execution-id=${config.execution}`, `--fields=${TASK_PANEL_FIELDS}`, ...taskExtra, `--page-size=${OVERVIEW_PAGE_SIZE}`, "--all"];
           return fetchWithNodeRetry(() => runData(args), config.execution);
         },
     bugs: (() => {
       const scope = bugScopeOf(config);
       return scope === null
         ? async () => []
-        : () => fetchWithNodeRetry(() => runData(["bug", "list", `${scope.flag}=${scope.value}`, `--fields=${BUG_PANEL_FIELDS}`, ...bugExtra, "--all"]));
+        : () => fetchWithNodeRetry(() => runData(["bug", "list", `${scope.flag}=${scope.value}`, `--fields=${BUG_PANEL_FIELDS}`, ...bugExtra, `--page-size=${OVERVIEW_PAGE_SIZE}`, "--all"]));
     })(),
   };
 }
@@ -329,17 +336,18 @@ function workspaceOf(req: IncomingMessage): string | undefined {
   }
 }
 
-/** 筛选参数白名单（字母数字与 = , _ -），防异常字符进入 CLI 参数。 */
-const FILTER_PARAM_RE = /^[a-zA-Z0-9=,_-]{1,120}$/;
+/** 筛选参数白名单（字母数字与 = , _ - ! ），防异常字符进入 CLI 参数。 */
+const FILTER_PARAM_RE = /^[a-zA-Z0-9=,_!-]{1,120}$/;
 
 /**
- * 解析面板筛选参数（taskBrowse/taskFilter/bugBrowse/bugFilter）。
+ * 解析面板筛选参数（taskBrowse/taskFilter/taskSearch/bugBrowse/bugFilter/bugSearch）。
  * 返回 null 表示存在非法参数（调用方应 400）；全部缺省返回 {}。
+ * search 允许任意非控字符（含中文），仅拒绝 - 开头（防 CLI flag 注入）与超长。
  */
 export function panelFiltersOf(req: IncomingMessage): PanelFilters | null {
   const url = req.url ?? "";
   const out: Record<string, string> = {};
-  for (const name of ["taskBrowse", "taskFilter", "bugBrowse", "bugFilter"] as const) {
+  for (const name of ["taskBrowse", "taskFilter", "taskSearch", "bugBrowse", "bugFilter", "bugSearch"] as const) {
     const match = new RegExp(`[?&]${name}=([^&]*)`).exec(url);
     if (match === null || match[1] === undefined || match[1] === "") continue;
     let value: string;
@@ -348,15 +356,26 @@ export function panelFiltersOf(req: IncomingMessage): PanelFilters | null {
     } catch {
       return null;
     }
-    if (!FILTER_PARAM_RE.test(value)) return null;
-    out[name] = value;
+    if (name.endsWith("Search")) {
+      const trimmed = value.trim();
+      if (trimmed === "") continue;
+      if (trimmed.length > 120 || trimmed.startsWith("-") || /[-~\x00-\x1f]/.test(trimmed)) return null;
+      out[name] = trimmed;
+    } else {
+      if (!FILTER_PARAM_RE.test(value)) return null;
+      out[name] = value;
+    }
   }
   return out as PanelFilters;
 }
 
 /** 缓存键：工作区 + 筛选参数（不同筛选条件独立缓存）。 */
 function cacheKeyOf(workspace: string, filters: PanelFilters): string {
-  return [workspace, filters.taskBrowse ?? "", filters.taskFilter ?? "", filters.bugBrowse ?? "", filters.bugFilter ?? ""].join("|");
+  return [
+    workspace,
+    filters.taskBrowse ?? "", filters.taskFilter ?? "", filters.taskSearch ?? "",
+    filters.bugBrowse ?? "", filters.bugFilter ?? "", filters.bugSearch ?? "",
+  ].join("|");
 }
 
 /**

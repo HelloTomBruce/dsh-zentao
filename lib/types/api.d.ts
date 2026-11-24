@@ -61,13 +61,15 @@ export declare const BUG_PANEL_FIELDS = "id,title,status,pri,severity,deadline,a
 export interface PanelFilters {
     taskBrowse?: string;
     taskFilter?: string;
+    taskSearch?: string;
     bugBrowse?: string;
     bugFilter?: string;
+    bugSearch?: string;
 }
 /**
  * 按工作区配置构造两次 CLI 查询（zentao-cli ≥ 0.5.0 命令面）。注入 queries 便于测试：
- * - tasks: `task list --execution-id=<id> --fields=<面板列> [--browse-type/--filter] --all`（execution 缺省 → 空数组 + note）
- * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> [--browse-type/--filter] --all`
+ * - tasks: `task list --execution-id=<id> --fields=<面板列> [--browse-type/--filter/--search] --page-size=200 --all`（execution 缺省 → 空数组 + note）
+ * - bugs: `bug list --product|--project|--execution=<id> --fields=<面板列> [--browse-type/--filter/--search] --page-size=200 --all`
  * 默认 run 解包 runZentao 的 {data, meta}，只取 data（面板暂不需要完整性元数据）。
  */
 export declare function createQueries(config: WorkspaceConfig, run?: (args: string[]) => Promise<unknown>, filters?: PanelFilters): Queries;
@@ -95,8 +97,9 @@ export declare function registerLoginApi(ctx: Context, run?: RunFn): () => void;
  */
 export declare function registerFileApi(ctx: Context): () => void;
 /**
- * 解析面板筛选参数（taskBrowse/taskFilter/bugBrowse/bugFilter）。
+ * 解析面板筛选参数（taskBrowse/taskFilter/taskSearch/bugBrowse/bugFilter/bugSearch）。
  * 返回 null 表示存在非法参数（调用方应 400）；全部缺省返回 {}。
+ * search 允许任意非控字符（含中文），仅拒绝 - 开头（防 CLI flag 注入）与超长。
  */
 export declare function panelFiltersOf(req: IncomingMessage): PanelFilters | null;
 /**
