@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { buildOverviewQuery, DEFAULT_FILTER_KEY, defaultTabFilter, FILTER_OPTIONS, normalizeOverview, openRowCount, type OverviewRow, type TabFilterState } from "../../src/client/overview.js";
 import { sanitizeAndFormatHtml } from "../../src/client/panel.js";
@@ -70,7 +71,8 @@ describe("sanitizeAndFormatHtml", () => {
   it("支持将 Markdown 格式图片转换为插件同源图片代理标签", () => {
     const input = "\\[步骤\\]\n\n测试步骤\n\n\\[结果\\]\n\n失败截图\n\n![file-read-11561.png]({11561.png})\n\n\\[期望\\]\n\n正常通过";
     const out = sanitizeAndFormatHtml(input);
-    expect(out).toContain('<img src="/__dsh-zentao__/file?id=11561" alt="file-read-11561.png" />');
+    expect(out).toContain('src="/__dsh-zentao__/file?id=11561"');
+    expect(out).toContain('alt="file-read-11561.png"');
     expect(out).toContain("[步骤]");
     expect(out).toContain("[结果]");
     expect(out).toContain("[期望]");

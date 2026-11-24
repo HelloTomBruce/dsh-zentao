@@ -11,6 +11,8 @@ const r = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
  * extraneous 清除；改这里与 tsconfig paths 即可。
  */
 export default defineConfig({
+  // client 组件测试需要 DOM（DOMPurify 依赖 window）
+  environmentMatchGlobs: [["tests/client/**", "jsdom"]],
   resolve: {
     alias: {
       "@deepseek-ai/cordis": r("../deepseek-harness/vendor/cordis/lib/index.js"),
