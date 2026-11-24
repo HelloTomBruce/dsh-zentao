@@ -19,8 +19,8 @@ export interface OverviewRow {
     status: string;
     [key: string]: unknown;
 }
-/** 概览视图（按视图懒加载；testcases/testtasks 待后续任务）。 */
-export type OverviewView = "tasks" | "bugs" | "stories";
+/** 概览视图（按视图懒加载）。 */
+export type OverviewView = "tasks" | "bugs" | "stories" | "testtasks" | "testcases";
 export declare const OVERVIEW_VIEWS: readonly OverviewView[];
 export interface OverviewViewData {
     /** 本次返回的视图。 */
@@ -57,6 +57,8 @@ export declare function fetchWithNodeRetry(run: () => Promise<unknown>, expectEx
 export declare const TASK_PANEL_FIELDS = "id,name,status,pri,deadline,assignedTo,assignedToRealName,openedBy,execution";
 export declare const BUG_PANEL_FIELDS = "id,title,status,pri,severity,deadline,assignedTo,assignedToRealName,openedBy";
 export declare const STORY_PANEL_FIELDS = "id,title,status,pri,stage,plan,assignedTo,assignedToRealName,openedBy";
+export declare const TESTTASK_PANEL_FIELDS = "id,name,status,pri,owner,build,begin,end";
+export declare const TESTCASE_PANEL_FIELDS = "id,title,status,pri,type,stage,lastRunResult,openedBy";
 /** 面板筛选（单视图作用域，经查询参数传入，白名单校验后拼入 CLI 参数）。 */
 export interface PanelFilters {
     browse?: string;

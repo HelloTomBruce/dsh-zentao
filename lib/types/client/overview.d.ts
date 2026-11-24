@@ -6,8 +6,8 @@
  * 架构（TASK-009 起）：overview 端点按 view 参数返回**单视图**数据
  * {view, rows, ...}，面板切 Tab 才拉对应视图（懒加载 + 服务端按视图缓存）。
  */
-/** 视图 key（testcases/testtasks 待后续任务）。 */
-export type PanelTab = "tasks" | "bugs" | "stories";
+/** 视图 key。 */
+export type PanelTab = "tasks" | "bugs" | "stories" | "testtasks" | "testcases";
 export interface WorkspaceBinding {
     product?: number;
     project?: number;
@@ -53,6 +53,8 @@ export interface FilterOption {
  */
 export declare const FILTER_OPTIONS: Record<PanelTab, readonly FilterOption[]>;
 export declare const DEFAULT_FILTER_KEY: Record<PanelTab, string>;
+/** 用例类型（type）中文映射。 */
+export declare const CASE_TYPE_MAP: Record<string, string>;
 /** 需求阶段（stage）中文映射：需求生命周期阶段，独立于 status。 */
 export declare const STORY_STAGE_MAP: Record<string, string>;
 /** 优先级选项（tasks/bugs 通用；空 key = 不筛选）。 */

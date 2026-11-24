@@ -7,8 +7,8 @@
  * {view, rows, ...}，面板切 Tab 才拉对应视图（懒加载 + 服务端按视图缓存）。
  */
 
-/** 视图 key（testcases/testtasks 待后续任务）。 */
-export type PanelTab = "tasks" | "bugs" | "stories";
+/** 视图 key。 */
+export type PanelTab = "tasks" | "bugs" | "stories" | "testtasks" | "testcases";
 
 export interface WorkspaceBinding {
   product?: number;
@@ -81,12 +81,35 @@ export const FILTER_OPTIONS: Record<PanelTab, readonly FilterOption[]> = {
     { key: "closed", label: "已关闭", filter: "status=closed" },
     { key: "all", label: "全部" },
   ],
+  // 测试单/用例：本部署 status 值为本地化中文（如「已关闭」）且 browse-type 被静默
+  // 忽略，服务端状态筛选不可靠——只提供全部默认，状态徽标原样显示
+  testtasks: [
+    { key: "all", label: "全部" },
+  ],
+  testcases: [
+    { key: "all", label: "全部" },
+  ],
 };
 
 export const DEFAULT_FILTER_KEY: Record<PanelTab, string> = {
   tasks: FILTER_OPTIONS.tasks[0]?.key ?? "unclosed",
   bugs: FILTER_OPTIONS.bugs[0]?.key ?? "unclosed",
   stories: FILTER_OPTIONS.stories[0]?.key ?? "unclosed",
+  testtasks: FILTER_OPTIONS.testtasks[0]?.key ?? "all",
+  testcases: FILTER_OPTIONS.testcases[0]?.key ?? "all",
+};
+
+/** 用例类型（type）中文映射。 */
+export const CASE_TYPE_MAP: Record<string, string> = {
+  feature: "功能",
+  performance: "性能",
+  configuration: "配置",
+  install: "安装部署",
+  security: "安全",
+  interface: "接口",
+  unit: "单元",
+  workflow: "流程",
+  others: "其他",
 };
 
 /** 需求阶段（stage）中文映射：需求生命周期阶段，独立于 status。 */

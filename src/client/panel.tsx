@@ -8,7 +8,7 @@
 import { createElement, useEffect, useState } from "react";
 import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import type { OverviewResponse, PanelTab, TabFilterState } from "./overview.ts";
-import { buildOverviewQuery, defaultTabFilter, FILTER_OPTIONS, openRowCount, PRI_OPTIONS, SEVERITY_OPTIONS, STORY_STAGE_MAP } from "./overview.ts";
+import { buildOverviewQuery, CASE_TYPE_MAP, defaultTabFilter, FILTER_OPTIONS, openRowCount, PRI_OPTIONS, SEVERITY_OPTIONS, STORY_STAGE_MAP } from "./overview.ts";
 import { useActiveWorkspace } from "./workspace.ts";
 import { ZentaoTabIcon } from "./icons.tsx";
 import { T } from "./theme.ts";
@@ -168,7 +168,7 @@ function DetailView({
   onBack,
 }: {
   row: Record<string, unknown>;
-  type: "tasks" | "bugs" | "stories";
+  type: TabKey;
   serverUrl?: string | undefined;
   onBack: () => void;
 }) {
@@ -180,11 +180,16 @@ function DetailView({
   const deadline = String(row.deadline ?? "未设置");
   const status = String(row.status ?? "");
   const pri = row.pri;
-  const desc = String(isTask ? row.desc ?? "" : type === "stories" ? row.spec ?? "" : row.steps ?? "");
+  const desc = String(
+    isTask ? row.desc ?? ""
+      : type === "stories" ? row.spec ?? ""
+        : type === "testtasks" ? row.desc ?? ""
+          : row.steps ?? "",
+  );
   const isStory = type === "stories";
 
   const webUrl = serverUrl
-    ? `${serverUrl.replace(/\/+$/, "")}/${isTask ? "task" : isStory ? "story" : "bug"}-view-${row.id}.html`
+    ? `${serverUrl.replace(/\/+$/, "")}/${isTask ? "task" : type === "stories" ? "story" : type === "testtasks" ? "testtask" : "case"}-view-${row.id}.html`
     : undefined;
 
   return createElement("div", { style: { display: "flex", flexDirection: "column", gap: "12px" } },
@@ -226,9 +231,25 @@ function DetailView({
         label: "所属计划",
         value: String(row.plan),
       }),
+      type === "testtasks" && createElement(FieldItem, {
+        label: "测试轮次",
+        value: [row.begin, row.end].filter((d) => d !== undefined && d !== "").map(String).join(" ~ ") || "-",
+      }),
+      type === "testtasks" && row.build !== undefined && createElement(FieldItem, {
+        label: "测试版本 (build)",
+        value: String(row.build),
+      }),
+      type === "testcases" && row.type !== undefined && createElement(FieldItem, {
+        label: "用例类型",
+        value: CASE_TYPE_MAP[String(row.type)] ?? String(row.type),
+      }),
+      type === "testcases" && row.lastRunResult !== undefined && row.lastRunResult !== "" && createElement(FieldItem, {
+        label: "最近执行结果",
+        value: row.lastRunResult === "pass" ? "通过" : row.lastRunResult === "fail" ? "失败" : String(row.lastRunResult),
+      }),
     ),
     createElement("div", { style: { marginTop: "4px" } },
-      createElement("div", { style: sectionTitleStyle }, isTask ? "任务描述" : isStory ? "需求描述" : "重现步骤"),
+      createElement("div", { style: sectionTitleStyle }, isTask ? "任务描述" : isStory ? "需求描述" : type === "testtasks" ? "测试说明" : "测试步骤"),
       createElement("style", null, `
         .dsh-zentao-desc img {
           max-width: 100%;
@@ -273,7 +294,7 @@ function RowList({
 }: {
   rows: Array<Record<string, unknown>>;
   nameKey: "name" | "title";
-  type: "tasks" | "bugs" | "stories";
+  type: TabKey;
   page: number;
   onPageChange: (newPage: number) => void;
   onSelect: (row: Record<string, unknown>) => void;
@@ -291,14 +312,18 @@ function RowList({
   return createElement("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } },
     ...currentSlice.map((row, i) => {
       const title = String(row[nameKey] ?? row.id);
-      const assigned = String(row.assignedToRealName ?? row.assignedTo ?? "未指派");
+      const assigned = String(row.assignedToRealName ?? row.assignedTo ?? row.owner ?? "未指派");
       const status = String(row.status ?? "");
       const deadline = row.deadline ? String(row.deadline) : undefined;
       const metaExtra = isTask
         ? (row.estimate !== undefined && row.estimate !== null && row.estimate !== "" ? `${row.estimate}h` : undefined)
         : type === "stories"
           ? (row.stage !== undefined && row.stage !== "" ? STORY_STAGE_MAP[String(row.stage)] ?? String(row.stage) : undefined)
-          : (row.severity ? `严重: ${row.severity}` : undefined);
+          : type === "testtasks"
+            ? [row.begin, row.end].filter((d) => d !== undefined && d !== "").map(String).join("~") || undefined
+            : type === "testcases"
+              ? (row.type !== undefined && row.type !== "" ? CASE_TYPE_MAP[String(row.type)] ?? String(row.type) : undefined)
+              : (row.severity ? `严重: ${row.severity}` : undefined);
 
       return createElement("div", {
         key: String(row.id ?? `${safePage}-${i}`),
@@ -316,7 +341,7 @@ function RowList({
         createElement("div", { style: rowMetaStyle },
           createElement("span", null, `👤 ${assigned}`),
           deadline && createElement("span", null, `📅 ${deadline}`),
-          metaExtra && createElement("span", null, isTask ? `⏱️ ${metaExtra}` : type === "stories" ? `📌 ${metaExtra}` : `🔥 ${metaExtra}`),
+          metaExtra && createElement("span", null, isTask ? `⏱️ ${metaExtra}` : type === "stories" ? `📌 ${metaExtra}` : type === "testtasks" ? `📅 ${metaExtra}` : type === "testcases" ? `🏷️ ${metaExtra}` : `🔥 ${metaExtra}`),
           createElement("span", { style: { marginLeft: "auto", color: T.accent, fontSize: "11px" } }, "详情 →"),
         ),
       );
@@ -444,7 +469,7 @@ const loginSubmitStyle = (pending: boolean): CSSProperties => ({
   background: T.accent, color: "#fff", opacity: pending ? 0.7 : 1,
 });
 
-type TabKey = "tasks" | "bugs" | "stories";
+type TabKey = "tasks" | "bugs" | "stories" | "testtasks" | "testcases";
 
 /** Tab 标题栏：图标 + 标题 + 未关闭 Bug 计数徽标（默认未关闭筛选，数据走服务端 60s 缓存）。 */
 export function ZentaoPanelTitle() {
@@ -558,6 +583,8 @@ export function ZentaoPanelBody() {
     tasks: defaultTabFilter("tasks"),
     bugs: defaultTabFilter("bugs"),
     stories: defaultTabFilter("stories"),
+    testtasks: defaultTabFilter("testtasks"),
+    testcases: defaultTabFilter("testcases"),
   });
   const filterQuery = buildOverviewQuery(tab, filterSel[tab]);
   const { data, refresh, loading } = useOverview(workspace.path, tab, filterQuery);
@@ -603,7 +630,7 @@ export function ZentaoPanelBody() {
   const myAccount = viewData.currentUser?.account ?? "zhangyingwu";
   const myRealname = viewData.currentUser?.realname ?? "张盈武";
   const isMine = (r: Record<string, unknown>) =>
-    (myAccount && (r.assignedTo === myAccount || r.openedBy === myAccount)) ||
+    (myAccount && (r.assignedTo === myAccount || r.openedBy === myAccount || r.owner === myAccount)) ||
     (myRealname && (r.assignedToRealName === myRealname || r.openedBy === myRealname));
 
   const rawList = viewData.rows;
@@ -616,6 +643,8 @@ export function ZentaoPanelBody() {
     { key: "tasks", label: `任务${counts.tasks !== undefined ? `（${counts.tasks}）` : ""}` },
     { key: "bugs", label: `Bug${counts.bugs !== undefined ? `（${counts.bugs}）` : ""}` },
     { key: "stories", label: `需求${counts.stories !== undefined ? `（${counts.stories}）` : ""}` },
+    { key: "testtasks", label: `测试单${counts.testtasks !== undefined ? `（${counts.testtasks}）` : ""}` },
+    { key: "testcases", label: `用例${counts.testcases !== undefined ? `（${counts.testcases}）` : ""}` },
   ];
 
   return createElement("div", { style: paneWrapperStyle },
