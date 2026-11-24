@@ -53,17 +53,23 @@ export interface OverviewViewData {
 
 /**
  * 集群负载均衡容错：个别后端节点异常时——① 回退返回其他 execution 的数据
- * （数据形状检查，仅 tasks 用 expectExecution）；② 翻页中途报「服务端分页未
+ * （数据形状检查，仅 tasks 有 expectExecution）；② 翻页中途报「服务端分页未
  * 向前推进」（瞬时错误，--all 多页拉取放大了命中概率）——自动重试命中正常
- * 节点，最多 3 次；其他错误（如未登录 1006）不重试直接抛。
+ * 节点，最多 3 次（带 300ms*次数 退避）；其他错误（如未登录 1006）不重试直接抛。
+ * 耗尽语义：tasks 的 execution 形状可校验——3 次全不匹配时**抛错**而非静默
+ * 返回可能来自回退节点的脏数据；无形状校验的视图退回第 4 次调用（若仍抛错
+ * 则自然传播）。
  */
 export async function fetchWithNodeRetry(run: () => Promise<unknown>, expectExecution?: number): Promise<unknown> {
+  let mismatched = false;
   for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
     try {
       const res = await run();
       if (expectExecution !== undefined && Array.isArray(res) && res.length > 0) {
         const first = res[0] as { execution?: string | number };
         if (first.execution !== undefined && String(first.execution) !== String(expectExecution)) {
+          mismatched = true;
           continue;
         }
       }
@@ -72,6 +78,9 @@ export async function fetchWithNodeRetry(run: () => Promise<unknown>, expectExec
       const message = error instanceof Error ? error.message : String(error);
       if (!/分页未向前推进/.test(message)) throw error;
     }
+  }
+  if (expectExecution !== undefined && mismatched) {
+    throw new Error(`任务数据连续 3 次来自异常执行节点（期望 execution=${expectExecution}），为避免展示错误迭代的数据已放弃本次加载，请稍后重试`);
   }
   return run();
 }

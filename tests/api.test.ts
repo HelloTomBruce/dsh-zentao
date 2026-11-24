@@ -545,3 +545,27 @@ describe("registerDetailApi", () => {
     expect(JSON.parse(res.body).error).toMatch(/对象不存在/);
   });
 });
+
+describe("fetchWithNodeRetry — 耗尽语义", () => {
+  it("tasks 3 次全部 execution 不匹配时抛错而非静默返回脏数据", async () => {
+    let calls = 0;
+    const run = vi.fn(async () => {
+      calls++;
+      return [{ id: calls, execution: "999", name: "脏数据" }]; // 永远不匹配期望的 65
+    });
+    await expect(createViewQuery({ execution: 65 }, "tasks", {}, run)!()).rejects.toThrow(/异常执行节点/);
+    expect(calls).toBe(3); // 3 次后放弃，不再有第 4 次无校验调用
+  });
+
+  it("无形状校验的视图（bugs）耗尽后最后一次调用若成功则返回", async () => {
+    let calls = 0;
+    const run = vi.fn(async () => {
+      calls++;
+      if (calls < 3) throw new Error("服务端分页未向前推进");
+      return [{ id: 9, title: "B9" }];
+    });
+    const bugs = await createViewQuery({ product: 2 }, "bugs", {}, run)!();
+    expect(calls).toBe(3);
+    expect(bugs).toHaveLength(1);
+  });
+});
