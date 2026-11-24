@@ -60,6 +60,43 @@ describe("createQueries", () => {
     expect(run).toHaveBeenCalledWith(["task", "list", "--execution-id=168", `--fields=${TASK_PANEL_FIELDS}`, "--browse-type=all", "--filter=status=doing", "--all"]);
     expect(run).toHaveBeenCalledWith(["bug", "list", "--product=2", `--fields=${BUG_PANEL_FIELDS}`, "--filter=status=active", "--all"]);
   });
+
+  it("「服务端分页未向前推进」瞬时错误自动重试（集群节点容错）", async () => {
+    let taskCalls = 0;
+    const run = vi.fn(async (args: string[]) => {
+      if (args[0] === "task") {
+        taskCalls++;
+        if (taskCalls < 3) throw new Error("zentao: 禅道服务端返回错误（Url：，Status：）：服务端分页未向前推进");
+        return [{ id: 1, name: "T1", execution: "65" }];
+      }
+      return [];
+    });
+    const tasks = await createQueries({ execution: 65 }, run).tasks();
+    expect(taskCalls).toBe(3);
+    expect(tasks).toHaveLength(1);
+  });
+
+  it("分页错误重试 Bug 查询；非分页错误（如未登录）不重试", async () => {
+    // Bug 查询：分页错误也应重试
+    let bugCalls = 0;
+    const runRetry = vi.fn(async () => {
+      bugCalls++;
+      if (bugCalls === 1) throw new Error("zentao: 服务端分页未向前推进");
+      return [{ id: 9, title: "B9" }];
+    });
+    const bugs = await createQueries({ product: 2 }, runRetry as never).bugs();
+    expect(bugCalls).toBe(2);
+    expect(bugs).toHaveLength(1);
+
+    // 非分页错误直接抛出（1006 未登录不值得重试）
+    let authCalls = 0;
+    const runAuth = vi.fn(async () => {
+      authCalls++;
+      throw new Error("zentao: 未找到可用的用户配置（1006）");
+    });
+    await expect(createQueries({ product: 2 }, runAuth).bugs()).rejects.toThrow(/1006/);
+    expect(authCalls).toBe(1);
+  });
 });
 
 describe("overviewData", () => {

@@ -44,6 +44,13 @@ interface Queries {
     bugs: () => Promise<unknown>;
 }
 /**
+ * 集群负载均衡容错：个别后端节点异常时——① 回退返回其他 execution 的数据
+ * （数据形状检查，仅 tasks 用 expectExecution）；② 翻页中途报「服务端分页未
+ * 向前推进」（瞬时错误，--all 多页拉取放大了命中概率）——自动重试命中正常
+ * 节点，最多 3 次；其他错误（如未登录 1006）不重试直接抛。
+ */
+export declare function fetchWithNodeRetry(run: () => Promise<unknown>, expectExecution?: number): Promise<unknown>;
+/**
  * 面板表格实际渲染的列（panel.tsx 卡片/表格共同用到的字段）。
  * overview 查询用 --fields 裁剪到这些列，降低子进程传输与序列化开销。
  * 未知字段会被 CLI 静默丢弃（实测），故裁剪是安全的。导出供测试共享单一事实源。
