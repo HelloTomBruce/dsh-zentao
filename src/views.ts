@@ -66,7 +66,7 @@ export const VIEWS: Record<ViewKey, ViewDef> = {
     key: "tasks", label: "任务", module: "task", nameKey: "name",
     fields: "id,name,status,pri,deadline,assignedTo,assignedToRealName,openedBy,execution",
     scopeArgs: (c) => (c.execution !== undefined ? [`--execution-id=${c.execution}`] : null),
-    missingNote: (f) => `配置缺 execution，任务视图为空（在 ${f} 中补充）`,
+    missingNote: (f) => `未选择执行——在上方范围选择器中选择，或在 ${f} 中配置 execution`,
     detailSupported: true,
     descFields: [{ field: "desc", label: "任务描述" }],
     filterOptions: [
@@ -87,7 +87,7 @@ export const VIEWS: Record<ViewKey, ViewDef> = {
       if (c.execution !== undefined) return [`--execution=${c.execution}`];
       return null;
     },
-    missingNote: (f) => `配置缺 product / project / execution，Bug 视图为空（在 ${f} 中补充）`,
+    missingNote: (f) => `未选择范围——在上方选择产品 / 项目 / 执行，或在 ${f} 中配置 product / project / execution`,
     detailSupported: true,
     descFields: [{ field: "steps", label: "重现步骤" }],
     filterOptions: [
@@ -103,7 +103,7 @@ export const VIEWS: Record<ViewKey, ViewDef> = {
     key: "stories", label: "需求", module: "story", nameKey: "title",
     fields: "id,title,status,pri,stage,plan,assignedTo,assignedToRealName,openedBy",
     scopeArgs: (c) => (c.product !== undefined ? [`--product=${c.product}`] : null),
-    missingNote: (f) => `配置缺 product，需求视图为空（在 ${f} 中补充）`,
+    missingNote: (f) => `未选择产品——在上方范围选择器中选择，或在 ${f} 中配置 product`,
     detailSupported: true,
     descFields: [
       { field: "spec", label: "需求描述" },
@@ -122,7 +122,7 @@ export const VIEWS: Record<ViewKey, ViewDef> = {
     key: "testtasks", label: "测试单", module: "testtask", nameKey: "name",
     fields: "id,name,status,pri,owner,build,begin,end",
     scopeArgs: (c) => (c.product !== undefined ? [`--product=${c.product}`] : null),
-    missingNote: (f) => `配置缺 product，测试单视图为空（在 ${f} 中补充）`,
+    missingNote: (f) => `未选择产品——在上方范围选择器中选择，或在 ${f} 中配置 product`,
     detailSupported: false, // CLI 无 testtask get 子命令
     descFields: [],
     filterOptions: [{ key: "all", label: "全部" }],
@@ -132,7 +132,7 @@ export const VIEWS: Record<ViewKey, ViewDef> = {
     key: "testcases", label: "用例", module: "testcase", nameKey: "title",
     fields: "id,title,status,pri,type,stage,lastRunResult,openedBy",
     scopeArgs: (c) => (c.product !== undefined ? [`--product=${c.product}`] : null),
-    missingNote: (f) => `配置缺 product，用例视图为空（在 ${f} 中补充）`,
+    missingNote: (f) => `未选择产品——在上方范围选择器中选择，或在 ${f} 中配置 product`,
     detailSupported: true,
     descFields: [
       { field: "precondition", label: "前置条件" },

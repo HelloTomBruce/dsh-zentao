@@ -5,10 +5,10 @@
  * /__dsh-zentao__/overview?workspace=<工作区路径>。纯函数/类型见
  * overview.ts 与 workspace.ts。
  */
-import { createElement, useEffect, useRef, useState } from "react";
-import type { ChangeEvent, CSSProperties, KeyboardEvent } from "react";
-import type { OverviewResponse, PanelTab, TabFilterState } from "./overview.ts";
-import { buildOverviewQuery, CASE_TYPE_MAP, defaultTabFilter, FILTER_OPTIONS, normalizeOverview, openRowCount, PRI_OPTIONS, SEVERITY_OPTIONS, STORY_STAGE_MAP } from "./overview.ts";
+import { createElement, useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent } from "react";
+import type { MetaScopesResponse, OverviewResponse, PanelTab, ScopeOption, ScopeSelection, TabFilterState, WorkspaceBinding } from "./overview.ts";
+import { buildOverviewQuery, buildScopeQuery, CASE_TYPE_MAP, defaultTabFilter, FILTER_OPTIONS, loadScopeSelection, normalizeOverview, openRowCount, PRI_OPTIONS, saveScopeSelection, SEVERITY_OPTIONS, STORY_STAGE_MAP } from "./overview.ts";
 import { useActiveWorkspace } from "./workspace.ts";
 import { ZentaoTabIcon } from "./icons.tsx";
 import { T } from "./theme.ts";
@@ -17,11 +17,12 @@ import { DetailView } from "./detail-view.tsx";
 export { sanitizeAndFormatHtml } from "./sanitize.ts";
 
 const OVERVIEW_URL = "/__dsh-zentao__/overview";
+const META_SCOPES_URL = "/__dsh-zentao__/meta/scopes";
 const LOGIN_URL = "/__dsh-zentao__/login";
 const CONFIG_FILENAME = ".dsh-zentao.json";
 const CONFIG_SAMPLE = '{ "product": 2, "execution": 168 }';
 
-function useOverview(workspacePath: string, view: PanelTab, filterQuery: string, executionParam: string): { data: OverviewResponse | null; refresh: () => void; loading: boolean } {
+function useOverview(workspacePath: string, view: PanelTab, filterQuery: string, scopeQuery: string): { data: OverviewResponse | null; refresh: () => void; loading: boolean } {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [nonce, setNonce] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -31,11 +32,11 @@ function useOverview(workspacePath: string, view: PanelTab, filterQuery: string,
     if (workspacePath === "") return;
     let alive = true;
     setLoading(true);
-    // 按视图懒加载：切 Tab 换 view 即拉对应视图（服务端按 工作区+视图+执行+筛选 缓存）。
-    const exec = view === "tasks" && executionParam !== "" ? `&execution=${executionParam}` : "";
+    // 按视图懒加载：切 Tab 换 view 即拉对应视图（服务端按 工作区+视图+scope+筛选 缓存）。
+    const scope = scopeQuery !== "" ? `&${scopeQuery}` : "";
     const fresh = bypassOnceRef.current ? "&fresh=1" : "";
     bypassOnceRef.current = false;
-    const url = `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}${exec}&${filterQuery}${fresh}`;
+    const url = `${OVERVIEW_URL}?workspace=${encodeURIComponent(workspacePath)}&view=${view}${scope}&${filterQuery}${fresh}`;
     fetch(url, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() as Promise<unknown> : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((raw) => { if (alive) setData(normalizeOverview(raw, view)); })
@@ -46,8 +47,22 @@ function useOverview(workspacePath: string, view: PanelTab, filterQuery: string,
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [nonce, workspacePath, view, filterQuery, executionParam]);
+  }, [nonce, workspacePath, view, filterQuery, scopeQuery]);
   return { data, refresh: () => { bypassOnceRef.current = true; setNonce((n) => n + 1); }, loading };
+}
+
+/** 范围选择器下拉数据源（meta 端点，服务端 60s 缓存）。 */
+function useMetaScopes(): MetaScopesResponse | null {
+  const [meta, setMeta] = useState<MetaScopesResponse | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(META_SCOPES_URL, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() as Promise<MetaScopesResponse> : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data) => { if (alive) setMeta(data); })
+      .catch(() => { /* 下拉数据源失败不阻塞面板——选择器为空，仅范围选择不可用 */ });
+    return () => { alive = false; };
+  }, []);
+  return meta;
 }
 
 const PAGE_SIZE = 15;
@@ -262,21 +277,26 @@ const countBadgeStyle: CSSProperties = {
   background: T.accent, color: "#fff",
 };
 
-/** 未配置工作区绑定的引导态：文件路径 + 格式示例。 */
-function UnconfiguredGuide({ workspace, onRefresh }: {
+/** 未配置工作区绑定的引导态：优先给范围选择器（选完即查，无需配置文件），附文件固化说明。 */
+function UnconfiguredGuide({ workspace, onRefresh, scopeProps }: {
   workspace: { path: string; title: string };
   onRefresh: () => void;
+  /** ScopeBar 的完整 props（面板态直接复用，选择即查询）。 */
+  scopeProps: Parameters<typeof ScopeBar>[0];
 }) {
   return createElement("div", { style: paneWrapperStyle },
     createElement("div", { style: sectionTitleStyle }, `工作区 ${workspace.title}`),
     createElement("div", { style: hintStyle },
-      "当前工作区尚未绑定禅道对象。在工作区根目录创建 ",
-      createElement("code", null, CONFIG_FILENAME),
-      `，声明所属的禅道产品 / 执行 / 项目（execution 供任务视图，product（或 project / execution）供 Bug 视图）：`),
-    createElement("code", { style: codeStyle }, `${workspace.path}/${CONFIG_FILENAME}\n${CONFIG_SAMPLE}`),
+      "当前工作区尚未绑定禅道对象。直接在下方选择范围即可查看数据（选择会按工作区记住）："),
+    createElement(ScopeBar, scopeProps),
+    createElement("div", { style: { height: "14px" } }),
     createElement("div", { style: hintStyle },
-      "创建后点击下方刷新即可按该范围展示任务与 Bug。产品 / 执行的 ID 可在对话中用 zentao 工具查询（如 zentao 模块=product 动作=list）。"),
-    createElement("button", { onClick: onRefresh, style: reloginLinkStyle }, "刷新"),
+      "如需固化绑定，可在工作区根目录创建 ",
+      createElement("code", null, CONFIG_FILENAME),
+      `（声明所属的产品 / 执行 / 项目），团队成员克隆仓库后即自动生效：`),
+    createElement("code", { style: codeStyle }, `${workspace.path}/${CONFIG_FILENAME}\n${CONFIG_SAMPLE}`),
+    createElement("div", { style: { height: "10px" } }),
+    createElement("button", { onClick: onRefresh, style: reloginLinkStyle }, "重新加载"),
   );
 }
 
@@ -336,6 +356,178 @@ function SkeletonRows({ rows, tab, filterBar = true }: { rows: number; tab: TabK
           createElement(SkeletonBar, { width: "44px", height: "14px" }),
           createElement(SkeletonBar, { width: `${52 + ((i * 17) % 30)}%`, height: "14px" })),
         createElement(SkeletonBar, { width: "36%", height: "11px" }))),
+  );
+}
+
+/** 范围项名称回显：优先名称，缺失时退回 #id。 */
+function scopeNameOf(list: ScopeOption[], id: number | string | undefined): string {
+  if (id === undefined) return "";
+  const hit = list.find((o) => String(o.id) === String(id));
+  return hit?.name !== undefined && hit.name !== "" ? `${hit.name} (#${id})` : `#${id}`;
+}
+
+/** 当前视图实际查询的范围文案（显式选择优先，回落文件绑定；与 effectiveConfigOf 服务端语义一致）。 */
+function effectiveScopeText(tab: TabKey, eff: WorkspaceBinding | undefined, products: ScopeOption[], projects: ScopeOption[], executions: ScopeOption[]): string {
+  if (eff === undefined) return "";
+  if (tab === "tasks") return eff.execution !== undefined ? `执行 ${scopeNameOf(executions, eff.execution)}` : "";
+  if (tab === "bugs") {
+    if (eff.product !== undefined) return `产品 ${scopeNameOf(products, eff.product)}`;
+    if (eff.project !== undefined) return `项目 ${scopeNameOf(projects, eff.project)}`;
+    if (eff.execution !== undefined) return `执行 ${scopeNameOf(executions, eff.execution)}`;
+    return "";
+  }
+  return eff.product !== undefined ? `产品 ${scopeNameOf(products, eff.product)}` : "";
+}
+
+/** 当前视图响应的范围维度（与 buildScopeQuery 的发送维度一致）。 */
+function scopeDimsOf(tab: TabKey): readonly ("product" | "project" | "execution")[] {
+  return tab === "tasks" ? ["execution"] : tab === "bugs" ? ["product", "project", "execution"] : ["product"];
+}
+
+/** 范围选择行：产品 / 项目→执行 级联下拉（数据来自 meta 端点；空选项 = 回落文件绑定，标签显示绑定值）。
+ *  生效规则：任务视图响应执行；Bug 视图响应任一（服务端 产品>项目>执行，显式项目/执行会清除绑定产品）；
+ *  需求/测试单/用例只响应产品。 */
+function ScopeBar({ tab, sel, onChange, meta, binding, effective, disabled }: {
+  tab: TabKey;
+  sel: ScopeSelection;
+  onChange: (patch: Partial<ScopeSelection>) => void;
+  meta: MetaScopesResponse | null;
+  /** 文件绑定（空选项标签与生效范围回显的回落源）。 */
+  binding: WorkspaceBinding | undefined;
+  /** 服务端生效范围回显（显式覆盖时与选择解耦的真实查询范围）。 */
+  effective: WorkspaceBinding | undefined;
+  disabled?: boolean | undefined;
+}) {
+  const products = useMemo(() => (meta?.products ?? []), [meta]);
+  const projects = useMemo(() => (meta?.projects ?? []), [meta]);
+  const allExecutions = useMemo(() => (meta?.executions ?? []), [meta]);
+  // 级联：选中项目后执行列表过滤到该项目下
+  const executions = useMemo(
+    () => (sel.project === "" ? allExecutions : allExecutions.filter((e) => String(e.project ?? "") === sel.project)),
+    [allExecutions, sel.project],
+  );
+  const nameOf = scopeNameOf;
+  const closedMark = (o: ScopeOption): string => (o.status === "closed" ? "（已关闭）" : "");
+  const optionEl = (o: ScopeOption) =>
+    createElement("option", { key: String(o.id), value: String(o.id) }, `${nameOf([o], o.id)}${closedMark(o)}`);
+  const emptyOption = (label: string) => createElement("option", { key: "", value: "" }, label);
+
+  // 生效范围回显（当前视图实际查询的范围：显式选择优先，回落绑定）
+  const effText = effectiveScopeText(tab, effective ?? binding, products, projects, allExecutions);
+
+  // 视图无关维度禁用：需求/测试单/用例仅按产品筛选（无执行/项目归属维度）
+  const noProjectDim = tab !== "tasks" && tab !== "bugs";
+  const noExecutionDim = tab !== "tasks" && tab !== "bugs";
+
+  return createElement("div", { style: scopeBarStyle },
+    createElement("select", {
+      value: sel.product,
+      onChange: (e: ChangeEvent<HTMLSelectElement>) => onChange({ product: e.target.value }),
+      style: filterSelectStyle,
+      "aria-label": "产品范围",
+      title: "产品（需求 / 测试单 / 用例 / Bug 的范围）",
+      disabled,
+    },
+      emptyOption(binding?.product !== undefined ? `产品：默认 · ${nameOf(products, binding.product)}` : "产品：全部（未选）"),
+      ...products.map(optionEl)),
+    createElement("select", {
+      value: sel.project,
+      onChange: (e: ChangeEvent<HTMLSelectElement>) => onChange({ project: e.target.value }),
+      style: { ...filterSelectStyle, ...(noProjectDim ? { opacity: 0.5 } : {}) },
+      "aria-label": "项目范围",
+      title: noProjectDim ? "该视图仅按产品筛选" : "项目（级联过滤执行列表；Bug 可按项目查）",
+      disabled: disabled || noProjectDim,
+    },
+      emptyOption(binding?.project !== undefined ? `项目：默认 · ${nameOf(projects, binding.project)}` : "项目：全部（未选）"),
+      ...projects.map(optionEl)),
+    createElement("select", {
+      value: sel.execution,
+      onChange: (e: ChangeEvent<HTMLSelectElement>) => onChange({ execution: e.target.value }),
+      style: { ...filterSelectStyle, ...(noExecutionDim ? { opacity: 0.5 } : {}) },
+      "aria-label": "执行范围",
+      title: noExecutionDim ? "该视图仅按产品筛选" : "执行（任务视图的范围；Bug 可按执行查）",
+      disabled: disabled || noExecutionDim,
+    },
+      emptyOption(binding?.execution !== undefined ? `执行：默认 · ${nameOf(allExecutions, binding.execution)}` : "执行：全部（未选）"),
+      ...executions.map(optionEl)),
+    effText !== "" && createElement("span", { style: scopeEffectiveStyle, title: "当前视图实际查询的范围（显式选择优先于文件绑定）" }, `生效：${effText}`),
+    meta?.errors !== undefined && createElement("span", { style: scopeErrorStyle, title: Object.values(meta.errors).join("；") }, "范围列表加载不完整"),
+  );
+}
+
+/** 范围摘要行（紧凑单行，替代常驻三下拉）：显示当前生效范围 + 「修改」入口。 */
+function ScopeSummary({ tab, sel, meta, binding, effective, disabled, onOpen }: {
+  tab: TabKey;
+  sel: ScopeSelection;
+  meta: MetaScopesResponse | null;
+  binding: WorkspaceBinding | undefined;
+  effective: WorkspaceBinding | undefined;
+  disabled?: boolean | undefined;
+  onOpen: () => void;
+}) {
+  const products = meta?.products ?? [];
+  const projects = meta?.projects ?? [];
+  const executions = meta?.executions ?? [];
+  const effText = effectiveScopeText(tab, effective ?? binding, products, projects, executions);
+  // 显式选择的维度（仅当前视图响应的维度参与摘要）
+  const manualParts: string[] = [];
+  for (const d of scopeDimsOf(tab)) {
+    const v = sel[d];
+    if (v === "") continue;
+    const label = d === "product" ? "产品" : d === "project" ? "项目" : "执行";
+    const list = d === "product" ? products : d === "project" ? projects : executions;
+    manualParts.push(`${label} ${scopeNameOf(list, v)}`);
+  }
+  const text = manualParts.length > 0
+    ? manualParts.join(" · ")
+    : effText !== "" ? `默认 · ${effText}` : "未选择范围";
+  return createElement("div", { style: scopeSummaryStyle },
+    createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: text },
+      `范围：${text}`),
+    meta?.errors !== undefined && createElement("span", { style: scopeErrorStyle, title: Object.values(meta.errors).join("；") }, "部分列表加载失败"),
+    disabled
+      ? null
+      : createElement("button", { onClick: onOpen, style: scopeEditBtnStyle, "aria-label": "修改数据范围" }, "修改"),
+  );
+}
+
+/** 范围修改弹窗：ScopeBar 移入居中卡片；外点/Esc 关闭；显式选择可一键清除回落文件绑定。 */
+function ScopeModal({ tab, sel, onChange, meta, binding, effective, onClose }: {
+  tab: TabKey;
+  sel: ScopeSelection;
+  onChange: (patch: Partial<ScopeSelection>) => void;
+  meta: MetaScopesResponse | null;
+  binding: WorkspaceBinding | undefined;
+  effective: WorkspaceBinding | undefined;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    // globalThis 前缀取 DOM 类型——react 的 KeyboardEvent 导入遮蔽了全局名
+    const onKey = (e: globalThis.KeyboardEvent): void => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("keydown", onKey); };
+  }, [onClose]);
+  const hasManual = sel.product !== "" || sel.project !== "" || sel.execution !== "";
+  return createElement("div", { style: modalOverlayStyle, onClick: onClose, role: "presentation" },
+    createElement("div", {
+      style: modalCardStyle,
+      onClick: (e: MouseEvent) => { e.stopPropagation(); },
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-label": "选择数据范围",
+    },
+      createElement("div", { style: modalTitleStyle }, "选择数据范围"),
+      meta === null && createElement("div", { style: hintStyle }, "范围列表加载中…"),
+      createElement(ScopeBar, { tab, sel, onChange, meta, binding, effective, disabled: false }),
+      createElement("div", { style: modalFooterStyle },
+        hasManual && createElement("button", {
+          onClick: () => { onChange({ product: "", project: "", execution: "" }); },
+          style: reloginLinkStyle,
+        }, "清除选择（用文件绑定默认）"),
+        createElement("span", { style: { flex: 1 } }),
+        createElement("button", { onClick: onClose, style: filterBtnStyle(true) }, "完成"),
+      ),
+    ),
   );
 }
 
@@ -422,9 +614,15 @@ export function ZentaoPanelBody() {
     testcases: defaultTabFilter("testcases"),
   });
   const filterQuery = buildOverviewQuery(tab, filterSel[tab]);
-  // 任务视图的执行切换选择（"" = 用绑定默认；独立于筛选缓存键体系，服务端按 execution 分键）
-  const [selectedExecution, setSelectedExecution] = useState("");
-  const { data, refresh, loading } = useOverview(workspace.path, tab, filterQuery, selectedExecution);
+  // 范围选择（产品/项目/执行）：localStorage 按工作区记忆，显式选择优先级高于文件绑定；
+  // 服务端按视图取相关维度（tasks→execution，bugs→三选一，其余→product）
+  const [scopeSel, setScopeSel] = useState<ScopeSelection>(() => loadScopeSelection(workspace.path));
+  useEffect(() => { setScopeSel(loadScopeSelection(workspace.path)); }, [workspace.path]);
+  const meta = useMetaScopes();
+  const scopeQuery = buildScopeQuery(tab, scopeSel);
+  const { data, refresh, loading } = useOverview(workspace.path, tab, filterQuery, scopeQuery);
+  // 范围修改弹窗开关（摘要行「修改」入口）
+  const [scopeModalOpen, setScopeModalOpen] = useState(false);
   // 各视图行数（该视图加载后才知道；Tab 标签按需展示）
   const [counts, setCounts] = useState<Partial<Record<PanelTab, number>>>({});
   useEffect(() => {
@@ -437,28 +635,36 @@ export function ZentaoPanelBody() {
   const [switching, setSwitching] = useState(false);
   useEffect(() => { if (!loading) setSwitching(false); }, [loading]);
   const switchIfChanged = (nextKey: string): void => {
-    const currentKey = `${tab}|${filterQuery}|${selectedExecution}`;
+    const currentKey = `${tab}|${filterQuery}|${scopeQuery}`;
     if (nextKey !== currentKey) setSwitching(true);
   };
   const applyFilter = (tab: PanelTab, patch: Partial<TabFilterState>) => {
     const newSel = { ...filterSel[tab], ...patch };
     const newQuery = buildOverviewQuery(tab, newSel);
-    switchIfChanged(`${tab}|${tab === tab ? newQuery : filterQuery}|${selectedExecution}`);
+    switchIfChanged(`${tab}|${newQuery}|${scopeQuery}`);
     setFilterSel((s) => ({ ...s, [tab]: newSel }));
     setSelectedRow(null);
     setPage(1);
   };
   const changeTab = (next: TabKey): void => {
     if (next === tab) return;
-    switchIfChanged(`${next}|${buildOverviewQuery(next, filterSel[next])}|${selectedExecution}`);
+    switchIfChanged(`${next}|${buildOverviewQuery(next, filterSel[next])}|${buildScopeQuery(next, scopeSel)}`);
     setTab(next);
     setSelectedRow(null);
     setPage(1);
   };
-  const changeExecution = (next: string): void => {
-    if (next === selectedExecution) return;
-    switchIfChanged(`${tab}|${filterQuery}|${next}`);
-    setSelectedExecution(next);
+  /** 范围选择变更：持久化到 localStorage 并触发重查。项目变更时级联清空不属于该项目的执行选择。 */
+  const changeScope = (patch: Partial<ScopeSelection>): void => {
+    const next = { ...scopeSel, ...patch };
+    if (patch.project !== undefined && next.execution !== "") {
+      const exec = (meta?.executions ?? []).find((e) => String(e.id) === next.execution);
+      if (patch.project === "" || (exec !== undefined && String(exec.project ?? "") !== patch.project)) {
+        next.execution = "";
+      }
+    }
+    saveScopeSelection(workspace.path, next);
+    switchIfChanged(`${tab}|${filterQuery}|${buildScopeQuery(tab, next)}`);
+    setScopeSel(next);
     setSelectedRow(null);
     setPage(1);
   };
@@ -491,6 +697,7 @@ export function ZentaoPanelBody() {
             onClick: () => { changeTab(t.key); },
             style: tabStyle(tab === t.key),
           }, t.label))),
+      createElement(ScopeSummary, { tab, sel: scopeSel, meta, binding: undefined, effective: undefined, disabled: true, onOpen: () => {} }),
       createElement(FilterBar, {
         tab, sel: filterSel[tab], onApply: applyFilter,
         onlyMine, setOnlyMine, counts: undefined, myRealname: "", disabled: true, canFilterMine: true,
@@ -498,7 +705,13 @@ export function ZentaoPanelBody() {
       createElement(SkeletonRows, { rows: 5, tab, filterBar: false }),
     );
   }
-  if (viewData.unconfigured === true) return createElement(UnconfiguredGuide, { workspace, onRefresh: refresh });
+  if (viewData.unconfigured === true) {
+    return createElement(UnconfiguredGuide, {
+      workspace,
+      onRefresh: refresh,
+      scopeProps: { tab, sel: scopeSel, onChange: changeScope, meta, binding: undefined, effective: undefined, disabled: false },
+    });
+  }
   if (viewData.error !== undefined) {
     return createElement("div", { style: paneWrapperStyle },
       createElement("div", { style: emptyStyle }, `禅道数据获取失败：${viewData.error}`),
@@ -545,18 +758,12 @@ export function ZentaoPanelBody() {
           onBack: () => setSelectedRow(null),
         })
       : createElement("div", { role: "tabpanel", style: { minHeight: "120px" } },
-          // 执行切换（多执行绑定时显示；切换即按该执行重新拉取任务）
-          tab === "tasks" && (viewData.config?.executions?.length ?? 0) > 1 && createElement("div", { style: { display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" } },
-            createElement("span", { style: { fontSize: "11px", color: T.textSecondary } }, "执行"),
-            createElement("select", {
-              value: selectedExecution !== "" ? selectedExecution : String(viewData.config?.execution ?? ""),
-              onChange: (e: ChangeEvent<HTMLSelectElement>) => {
-                changeExecution(e.target.value);
-              },
-              style: filterSelectStyle,
-              "aria-label": "执行切换",
-            }, ...(viewData.config?.executions ?? []).map((id) =>
-              createElement("option", { key: id, value: String(id) }, `#${id}`)))),
+          // 范围摘要行（紧凑单行；点「修改」弹窗编辑，避免三下拉常驻占空间）
+          createElement(ScopeSummary, {
+            tab, sel: scopeSel, meta,
+            binding: viewData.config, effective: viewData.effective,
+            onOpen: () => { setScopeModalOpen(true); },
+          }),
           // 快捷过滤栏：状态/优先级（Bug 加严重程度）/关键词 + 全部 vs 指派给我
           createElement(FilterBar, {
             tab, sel: filterSel[tab], onApply: applyFilter,
@@ -584,6 +791,11 @@ export function ZentaoPanelBody() {
           loading && createElement("span", { style: hintStyle }, "刷新中…"),
           createElement("span", { style: { color: T.borderSubtle, fontSize: "12px" } }, "|"),
           createElement("button", { onClick: () => setShowLogin(true), style: reloginLinkStyle }, "重新登录 / 切换账号")),
+    scopeModalOpen && createElement(ScopeModal, {
+      tab, sel: scopeSel, onChange: changeScope, meta,
+      binding: viewData.config, effective: viewData.effective,
+      onClose: () => { setScopeModalOpen(false); },
+    }),
   );
 }
 
@@ -616,6 +828,88 @@ const filterBarStyle: CSSProperties = {
   justifyContent: "space-between",
   marginBottom: "10px",
   paddingBottom: "2px",
+};
+
+/** 范围选择行：与过滤栏同节奏，三个下拉 + 生效范围回显。 */
+const scopeBarStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  flexWrap: "wrap",
+  marginBottom: "8px",
+};
+
+/** 生效范围回显小字（ScopeBar 行内右侧）。 */
+const scopeEffectiveStyle: CSSProperties = {
+  fontSize: "11px",
+  color: T.textSecondary,
+  marginLeft: "auto",
+  maxWidth: "45%",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+/** 范围列表加载失败提示（降级：选择器可用但选项不全）。 */
+const scopeErrorStyle: CSSProperties = {
+  fontSize: "11px",
+  color: T.accent,
+};
+
+/** 范围摘要行（紧凑单行，浅底色块）。 */
+const scopeSummaryStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  marginBottom: "8px",
+  padding: "5px 8px",
+  background: T.surfaceMuted,
+  border: `1px solid ${T.borderSubtle}`,
+  borderRadius: T.radiusSm,
+  fontSize: "11px",
+  color: T.textSecondary,
+  minWidth: 0,
+};
+
+/** 摘要行「修改」按钮（链接态）。 */
+const scopeEditBtnStyle: CSSProperties = {
+  border: "none", background: "transparent", cursor: "pointer", padding: "0",
+  fontSize: "11px", color: T.accent, textDecoration: "underline",
+  flexShrink: 0,
+};
+
+/** 范围修改弹窗：全屏遮罩 + 居中卡片。 */
+const modalOverlayStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(15, 18, 25, 0.45)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 1000,
+};
+
+const modalCardStyle: CSSProperties = {
+  background: T.surface,
+  border: `1px solid ${T.border}`,
+  borderRadius: T.radiusMd,
+  padding: "16px",
+  minWidth: "360px",
+  maxWidth: "92%",
+  boxShadow: "0 8px 24px rgba(17, 24, 39, 0.25)",
+};
+
+const modalTitleStyle: CSSProperties = {
+  fontSize: "13px",
+  fontWeight: "600",
+  color: T.text,
+  marginBottom: "10px",
+};
+
+const modalFooterStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  marginTop: "12px",
 };
 
 const filterBtnStyle = (active: boolean): CSSProperties => ({

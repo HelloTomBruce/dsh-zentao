@@ -1,9 +1,20 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
-import { buildOverviewQuery, DEFAULT_FILTER_KEY, defaultTabFilter, FILTER_OPTIONS, normalizeOverview, openRowCount, type OverviewRow, type TabFilterState } from "../../src/client/overview.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { buildOverviewQuery, buildScopeQuery, DEFAULT_FILTER_KEY, defaultTabFilter, FILTER_OPTIONS, loadScopeSelection, normalizeOverview, openRowCount, saveScopeSelection, type OverviewRow, type TabFilterState } from "../../src/client/overview.js";
 import { sanitizeAndFormatHtml } from "../../src/client/sanitize.js";
 
 const f = (tab: "tasks" | "bugs", patch: Partial<TabFilterState> = {}): TabFilterState => ({ ...defaultTabFilter(tab), ...patch });
+
+/** jsdom 环境的 localStorage 不可用——用 Map 实现替换全局对象。 */
+function stubLocalStorage(): void {
+  const store = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => { store.set(k, v); },
+    removeItem: (k: string) => { store.delete(k); },
+  });
+}
+afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("openRowCount", () => {
   it("统计非 closed 行数（标题栏未关闭 Bug 徽标用）", () => {
@@ -126,5 +137,46 @@ describe("sanitizeAndFormatHtml — fileID 查询参数形态（真实部署样�
   it("未转义 & 的形态同样重写", () => {
     const html = '<img src="/zentao/index.php?m=file&f=read&t=png&fileID=999" />';
     expect(sanitizeAndFormatHtml(html)).toContain('src="/__dsh-zentao__/file?id=999"');
+  });
+});
+
+describe("buildScopeQuery（范围选择查询串，按视图取相关维度）", () => {
+  const sel = { product: "2", project: "5", execution: "168" };
+
+  it("tasks 只发 execution（task 只认执行）", () => {
+    expect(buildScopeQuery("tasks", sel)).toBe("execution=168");
+  });
+
+  it("bugs 三个维度全发（服务端按 产品>项目>执行 取生效项）", () => {
+    expect(buildScopeQuery("bugs", sel)).toBe("product=2&project=5&execution=168");
+  });
+
+  it("stories/testtasks/testcases 只发 product（无执行/项目归属维度）", () => {
+    expect(buildScopeQuery("stories", sel)).toBe("product=2");
+    expect(buildScopeQuery("testtasks", sel)).toBe("product=2");
+    expect(buildScopeQuery("testcases", sel)).toBe("product=2");
+  });
+
+  it("全空选择返回空串（纯文件绑定行为）", () => {
+    expect(buildScopeQuery("bugs", { product: "", project: "", execution: "" })).toBe("");
+  });
+});
+
+describe("范围选择 localStorage 记忆", () => {
+  it("save 后 load 原样恢复；全空选择删除键", () => {
+    stubLocalStorage();
+    saveScopeSelection("/ws/a", { product: "2", project: "", execution: "168" });
+    expect(loadScopeSelection("/ws/a")).toEqual({ product: "2", project: "", execution: "168" });
+    saveScopeSelection("/ws/a", { product: "", project: "", execution: "" });
+    expect(loadScopeSelection("/ws/a")).toEqual({ product: "", project: "", execution: "" });
+  });
+
+  it("非法/损坏内容安全回退为空选择", () => {
+    stubLocalStorage();
+    saveScopeSelection("/ws/b", { product: "", project: "", execution: "" });
+    localStorage.setItem("dsh-zentao:scope:/ws/b", "not-json{{{");
+    expect(loadScopeSelection("/ws/b")).toEqual({ product: "", project: "", execution: "" });
+    localStorage.setItem("dsh-zentao:scope:/ws/b", JSON.stringify({ product: "rm -rf", execution: 12 }));
+    expect(loadScopeSelection("/ws/b")).toEqual({ product: "", project: "", execution: "" });
   });
 });

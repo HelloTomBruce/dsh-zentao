@@ -35,6 +35,8 @@ export interface OverviewResponse {
   view: PanelTab;
   rows: OverviewRow[];
   config?: WorkspaceBinding;
+  /** 显式 scope 覆盖生效后的完整配置（仅请求带 scope 参数时返回；面板回显生效范围）。 */
+  effective?: WorkspaceBinding;
   unconfigured?: boolean;
   currentUser?: { account: string; realname?: string };
   serverUrl?: string;
@@ -101,4 +103,81 @@ export function normalizeOverview(raw: unknown, view: PanelTab): OverviewRespons
     ...(r.note !== undefined ? { note: r.note } : {}),
     ...(legacy.error !== undefined ? { error: legacy.error } : {}),
   };
+}
+
+/* ---------- 范围选择器（手动选择产品/项目/执行，优先级高于文件绑定） ---------- */
+
+/** 范围选择状态（字符串形态，"" = 未选 → 回落文件绑定）。 */
+export interface ScopeSelection {
+  product: string;
+  project: string;
+  execution: string;
+}
+
+export const EMPTY_SCOPE: ScopeSelection = { product: "", project: "", execution: "" };
+
+/**
+ * 按视图构造 scope 查询串——只发送与该视图相关的显式维度：
+ * - tasks → 仅 execution（task 只认执行）
+ * - bugs → product/project/execution 全发（服务端按 产品>项目>执行 取生效项，
+ *   且显式项目/执行未选产品时会清除绑定产品，让手动选择生效）
+ * - stories/testtasks/testcases → 仅 product（这些对象无执行/项目维度；
+ *   若误发 execution，服务端会清除绑定 product 导致这些视图失去范围）
+ */
+export function buildScopeQuery(view: PanelTab, sel: ScopeSelection): string {
+  const dims: readonly (keyof ScopeSelection)[] =
+    view === "tasks" ? ["execution"]
+    : view === "bugs" ? ["product", "project", "execution"]
+    : ["product"];
+  return dims
+    .filter((k) => sel[k] !== "")
+    .map((k) => `${k}=${encodeURIComponent(sel[k])}`)
+    .join("&");
+}
+
+/** meta 端点（/__dsh-zentao__/meta/scopes）响应：范围选择器下拉数据源。 */
+export interface ScopeOption {
+  id: number | string;
+  name?: string;
+  status?: string;
+  /** 执行所属项目（级联分组用；仅 executions 项）。 */
+  project?: number | string;
+}
+
+export interface MetaScopesResponse {
+  products?: ScopeOption[];
+  projects?: ScopeOption[];
+  executions?: ScopeOption[];
+  errors?: { products?: string; projects?: string; executions?: string };
+}
+
+const SCOPE_STORAGE_PREFIX = "dsh-zentao:scope:";
+
+/** 读取工作区记忆的范围选择（localStorage；非法内容安全回退为空选择）。 */
+export function loadScopeSelection(workspacePath: string): ScopeSelection {
+  try {
+    const raw = localStorage.getItem(SCOPE_STORAGE_PREFIX + workspacePath);
+    if (raw === null) return EMPTY_SCOPE;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const str = (v: unknown): string => (typeof v === "string" && /^\d+$/.test(v) ? v : "");
+    return {
+      product: str(parsed.product),
+      project: str(parsed.project),
+      execution: str(parsed.execution),
+    };
+  } catch {
+    return EMPTY_SCOPE;
+  }
+}
+
+/** 记忆范围选择（全空时删除键，回落纯绑定行为）。 */
+export function saveScopeSelection(workspacePath: string, sel: ScopeSelection): void {
+  try {
+    const key = SCOPE_STORAGE_PREFIX + workspacePath;
+    if (sel.product === "" && sel.project === "" && sel.execution === "") {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, JSON.stringify(sel));
+    }
+  } catch { /* localStorage 不可用（隐私模式等）时静默降级为会话内状态 */ }
 }
