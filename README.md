@@ -74,7 +74,9 @@ htmlToMarkdown=true                  # 富文本字段（desc/steps）转 Markdo
 - **link 开发运行时**：以 `dsh plugin add link:` 开发时，`lib/index.js` 从工作区真实路径加载，运行时 `import @deepseek-ai/dsh-tools`（tsdown external）需能解析到**正在运行的 dsh 宿主安装树**——执行 `node scripts/link-host-packages.mjs` 创建软链（指向全局 dsh 安装的 node_modules/@deepseek-ai，与宿主共享模块实例）；**npm install 会把这些软链当 extraneous 清除，装完依赖需重跑该脚本**
 - **客户端 React external**：`lib/client.js`（CJS closure-factory）保持 react/react-dom 外部引用，由宿主注入
 - **右侧栏 Tab 集成**：`dsh.client.inject` 声明 `@deepseek-ai/dsh-client-ui-sidebar-right`（运行时注入 `sidebarRight`/`sidebarRightTabs` 服务），本地 `ambient.d.ts` 补齐席位类型（本地 harness 源码暂无该包）
-- **构建**：tsdown（node 侧 ESM + 客户端 CJS），`npm run verify` = typecheck + test + build
+- **安全**：详情富文本经 DOMPurify 白名单消毒（剥事件处理器/javascript: 协议，详见 src/client/sanitize.ts）后才渲染并做图片代理重写；概览/登录/附件端点均做本机来源校验与参数白名单；附件代理限制 50MB 并 private 缓存
+- **架构**：视图 registry 单源（src/views.ts，server+client 共享）——视图 key/筛选/字段裁剪/scope 解析一处定义；面板按视图懒加载（切 Tab 才拉对应数据，服务端按 工作区+视图+执行+筛选 分键缓存 60s，FIFO 上限 200 条）
+- **构建**：tsdown（node 侧 ESM + 客户端 CJS），`npm run verify` = typecheck + test + build；lib/ 不入库（.gitignore），GitHub/git 依赖安装由 prepare 钩子自动构建
 
 ## 开发
 
