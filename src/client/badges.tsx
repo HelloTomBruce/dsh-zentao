@@ -20,9 +20,10 @@ export function StatusBadge({ status }: { status: string }) {
   const meta = STATUS_MAP[status] ?? { label: status, color: T.textSecondary, bg: T.surfaceMuted };
   return createElement("span", {
     style: {
-      fontSize: T.fontXxs,
+      fontSize: "11px",
       fontWeight: "600",
-      padding: "2px 8px",
+      padding: "1px 6px",
+      lineHeight: "15px",
       borderRadius: T.radiusXs,
       background: meta.bg,
       color: meta.color,
