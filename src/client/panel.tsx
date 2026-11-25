@@ -19,6 +19,7 @@ export { sanitizeAndFormatHtml } from "./sanitize.ts";
 const OVERVIEW_URL = "/__dsh-zentao__/overview";
 const META_SCOPES_URL = "/__dsh-zentao__/meta/scopes";
 const LOGIN_URL = "/__dsh-zentao__/login";
+const LOGOUT_URL = "/__dsh-zentao__/logout";
 const CONFIG_FILENAME = ".dsh-zentao.json";
 const CONFIG_SAMPLE = '{ "product": 2, "execution": 168 }';
 
@@ -623,6 +624,17 @@ export function ZentaoPanelBody() {
   const { data, refresh, loading } = useOverview(workspace.path, tab, filterQuery, scopeQuery);
   // 范围修改弹窗开关（摘要行「修改」入口）
   const [scopeModalOpen, setScopeModalOpen] = useState(false);
+  /** 重新登录：先经 CLI 清理当前登录凭证，再进登录视图并刷新——刷新返回 1006
+   *  后登录门禁接管（无「收起」，必须重新登录）。登出请求失败也不阻塞进登录
+   *  视图（凭证仍在，登录后覆盖；此时视图带「收起」可回列表）。 */
+  const relogin = (): void => {
+    fetch(LOGOUT_URL, { method: "POST" })
+      .catch(() => { /* 端点失败（如旧版服务端未重启）：仍进登录视图，覆盖式登录 */ })
+      .then(() => {
+        setShowLogin(true);
+        refresh();
+      });
+  };
   // 各视图行数（该视图加载后才知道；Tab 标签按需展示）
   const [counts, setCounts] = useState<Partial<Record<PanelTab, number>>>({});
   useEffect(() => {
@@ -712,6 +724,20 @@ export function ZentaoPanelBody() {
       scopeProps: { tab, sel: scopeSel, onChange: changeScope, meta, binding: undefined, effective: undefined, disabled: false },
     });
   }
+  // 登录态门禁：本地无凭证（响应无 currentUser）或查询报未登录（1006/令牌失效）时，
+  // 不渲染列表/Tab/筛选——面板整体切换为登录视图（显式 showLogin 同样进入该视图）
+  const loginGate = viewData.currentUser === undefined
+    || (viewData.error !== undefined && /1006|未登录/.test(viewData.error));
+  if (showLogin || loginGate) {
+    return createElement("div", { style: paneWrapperStyle },
+      loginGate && viewData.error !== undefined && createElement("div", { style: hintStyle }, `未登录或登录已过期：${viewData.error}`),
+      createElement("div", { style: { height: "10px" } }),
+      createElement(LoginForm, {
+        onLoggedIn: () => { setShowLogin(false); refresh(); },
+        onClose: loginGate ? undefined : () => { setShowLogin(false); },
+      }),
+    );
+  }
   if (viewData.error !== undefined) {
     return createElement("div", { style: paneWrapperStyle },
       createElement("div", { style: emptyStyle }, `禅道数据获取失败：${viewData.error}`),
@@ -790,7 +816,7 @@ export function ZentaoPanelBody() {
           createElement("button", { onClick: refresh, style: reloginLinkStyle }, "刷新数据"),
           loading && createElement("span", { style: hintStyle }, "刷新中…"),
           createElement("span", { style: { color: T.borderSubtle, fontSize: "12px" } }, "|"),
-          createElement("button", { onClick: () => setShowLogin(true), style: reloginLinkStyle }, "重新登录 / 切换账号")),
+          createElement("button", { onClick: relogin, style: reloginLinkStyle }, "重新登录 / 切换账号")),
     scopeModalOpen && createElement(ScopeModal, {
       tab, sel: scopeSel, onChange: changeScope, meta,
       binding: viewData.config, effective: viewData.effective,

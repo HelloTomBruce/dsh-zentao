@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import {
   registerOverviewApi,
   registerLoginApi,
+  registerLogoutApi,
   overviewViewData,
   createViewQuery,
   buildLoginArgs,
@@ -550,6 +551,68 @@ describe("registerLoginApi", () => {
     await route.handler(fakeReq("POST", { server: "http://z" }) as never, res as never);
     expect(run).not.toHaveBeenCalled();
     expect(res.status).toBe(400);
+  });
+});
+
+describe("registerLogoutApi（清理当前登录状态）", () => {
+  function fakeReq(method: string, headers: Record<string, string> = { host: "127.0.0.1:3080" }) {
+    return { method, headers } as never;
+  }
+  function fakeRes() {
+    return {
+      status: 0,
+      body: "",
+      writeHead(st: number, _headers: unknown) { this.status = st; },
+      end(b: string) { this.body = b; },
+    };
+  }
+  function setup(run: (args: string[]) => Promise<unknown>) {
+    const registered: { kind: string; path: string; handler: (req: never, res: never) => Promise<void> }[] = [];
+    const exactMap = new Map<string, unknown>();
+    const ctx = {
+      webServer: {
+        exact: exactMap,
+        register: (r: { kind: string; path: string; handler: (req: never, res: never) => Promise<void> }) => {
+          if (exactMap.has(r.path)) throw new Error(`duplicate ${r.kind} route "${r.path}"`);
+          exactMap.set(r.path, r);
+          registered.push(r);
+          return () => { exactMap.delete(r.path); };
+        },
+      },
+    };
+    registerLogoutApi(ctx as never, run);
+    return registered[0];
+  }
+
+  it("注册 /__dsh-zentao__/logout 精确路由，仅接受 POST", async () => {
+    const route = setup(async () => "");
+    expect(route.kind).toBe("exact");
+    expect(route.path).toBe("/__dsh-zentao__/logout");
+    const res = fakeRes();
+    await route.handler(fakeReq("GET"), res as never);
+    expect(res.status).toBe(405);
+  });
+
+  it("拒绝非本机来源（登出覆盖凭证，同 login 的 CSRF 面）", async () => {
+    const route = setup(async () => "");
+    const res = fakeRes();
+    await route.handler(fakeReq("POST", { host: "127.0.0.1:3080", origin: "https://evil.example" }), res as never);
+    expect(res.status).toBe(403);
+  });
+
+  it("转发 zentao auth logout（清当前 profile 本地凭证）", async () => {
+    const run = vi.fn(async () => "");
+    const res = fakeRes();
+    await setup(run).handler(fakeReq("POST"), res as never);
+    expect(run).toHaveBeenCalledWith(["auth", "logout"]);
+    expect(JSON.parse(res.body)).toEqual({ ok: true });
+  });
+
+  it("CLI 失败透出 ok:false + error（不抛 500，面板按未登录继续流程）", async () => {
+    const run = vi.fn(async () => { throw new Error("zentao: 无已保存账号"); });
+    const res = fakeRes();
+    await setup(run).handler(fakeReq("POST"), res as never);
+    expect(JSON.parse(res.body)).toEqual({ ok: false, error: "zentao: 无已保存账号" });
   });
 });
 

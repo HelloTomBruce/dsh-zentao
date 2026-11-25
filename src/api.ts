@@ -15,6 +15,7 @@ import { VIEWS, VIEW_KEYS, isViewKey, type ViewKey, type WorkspaceBinding } from
 
 export const OVERVIEW_PATH = "/__dsh-zentao__/overview";
 export const LOGIN_PATH = "/__dsh-zentao__/login";
+export const LOGOUT_PATH = "/__dsh-zentao__/logout";
 export const FILE_PATH = "/__dsh-zentao__/file";
 export const DETAIL_PATH = "/__dsh-zentao__/detail";
 export const META_SCOPES_PATH = "/__dsh-zentao__/meta/scopes";
@@ -286,6 +287,55 @@ export function registerLoginApi(ctx: Context, run: RunFn = runZentaoLoose): () 
     } catch {}
     if (webServer.exact && typeof webServer.exact.delete === "function") {
       webServer.exact.delete(LOGIN_PATH);
+    }
+  };
+}
+
+/**
+ * POST /__dsh-zentao__/logout：清理当前登录状态。转发 `zentao auth logout`
+ * （删除当前 profile 的本地凭证记录；插件不直接读写凭证文件）。登出后所有
+ * 查询报 1006，面板登录门禁接管。输出为纯文本，故用宽松的 runZentaoLoose。
+ */
+export function registerLogoutApi(ctx: Context, run: RunFn = runZentaoLoose): () => void {
+  const webServer = ctx.webServer as unknown as {
+    register: (route: unknown) => () => void;
+    exact?: Map<string, unknown>;
+  } | undefined;
+  if (webServer === undefined) return () => {};
+
+  if (webServer.exact && typeof webServer.exact.delete === "function") {
+    webServer.exact.delete(LOGOUT_PATH);
+  }
+
+  const dispose = webServer.register({
+    kind: "exact",
+    path: LOGOUT_PATH,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      if ((req.method ?? "GET") !== "POST") {
+        sendJson(res, 405, { error: "method not allowed" });
+        return;
+      }
+      // 登出覆盖本地凭证——只接受本机来源（同 login 的 CSRF 面：恶意网页可发
+      // text/plain 简单 POST 触发登出骚扰）
+      if (!isLocalRequest(req)) {
+        sendJson(res, 403, { error: "拒绝非本机来源的登出请求" });
+        return;
+      }
+      try {
+        await run(["auth", "logout"]);
+        sendJson(res, 200, { ok: true });
+      } catch (error) {
+        sendJson(res, 200, { ok: false, error: asCliError(error).message });
+      }
+    },
+  });
+
+  return () => {
+    try {
+      dispose?.();
+    } catch {}
+    if (webServer.exact && typeof webServer.exact.delete === "function") {
+      webServer.exact.delete(LOGOUT_PATH);
     }
   };
 }
